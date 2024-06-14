@@ -11,10 +11,10 @@ Work in progress, publication link will follow here as soon as available.
 
 The following README contains:
 
-1. [Project description](##project-description)
-2. [Main results](##main-results)
-3. [Setup of the pipeline](##setup-of-the-pipeline)
-4. [Running the pipeline](##running-the-pipeline)
+1. [Project description](#project-description)
+2. [Main results](#main-results)
+3. [Setup of the pipeline](#setup-of-the-pipeline)
+4. [Running the pipeline](#running-the-pipeline)
 
 ## Project description
 
