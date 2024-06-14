@@ -1,0 +1,11 @@
+{
+    "__default__" :
+    {
+        "mem"      : "{resources.mem_mb}",
+        "time"     : "{params.time}",
+	    "ntasks"   : 1,
+	    "cpu"      : "{threads}",
+	    "log"      : "{log[0]}",
+	    "partition": "slim18"
+    }
+}

@@ -1,0 +1,1549 @@
+---
+title: "Overall performance evaluation"
+author: "Katharina Schmid"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = '../snakemake_pipeline')
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(knitr)
+
+theme_set(theme_bw())
+
+```
+
+General parameters:
+
+Important note: SNU16 fails for the newer Numbat version (needs to be excluded currently)
+
+Don't show SNU601 subsampled runs for now (not sure whether we want to include them ...)
+
+```{r, echo = TRUE}
+
+#Load the different result files
+dataset_names<-c("SNU601",#"SNU601_sample20","SNU601_sample40","SNU601_sample60","SNU601_sample80",
+                 "NCIN87","MKN45","KATOIII",
+                 "NUGC4","SNU638","SNU668","HGC27", "SNU16",
+                 "MCF7","COLO320","MM","BCC06","BCC06post")
+dataset_ending<-setNames(c("",#"","","","",
+                           "","","",
+                           "","","","", "",
+                           "","_cnvkit","_wes","_wes","_wes"),
+                         dataset_names)
+
+#Match type of ground truth
+dataset_groundtruth<-setNames(c("WGS_samelab",#"WGS_samelab","WGS_samelab","WGS_samelab","WGS_samelab",
+                                "WGS_samelab","WGS_samelab","WGS_samelab",
+                                "WGS_samelab","WGS_samelab","WGS_samelab","WGS_samelab", "WGS_samelab",
+                                "WGS_otherlab","WGS_otherlab","WES_samelab","WES_samelab","WES_samelab"),
+                              dataset_names)
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("HoneyBADGER (CNV)","HoneyBADGER (Expr)",
+                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("hb_cnv","honeybadger",
+                         "infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+#Match resources (sometimes multiple variants for one method)
+mapping_resources<-data.frame(methods_full=c("HoneyBADGER (CNV)","HoneyBADGER (Expr)",
+                                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
+                                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                              methods_reduced=c("HoneyBADGER","HoneyBADGER",
+                                         "InferCNV","InferCNV","CaSpER",
+                                         "copyKat","SCEVAN","SCEVAN",
+                                         "Numbat","Numbat", "CONICSmat"))
+
+```
+
+## Read the general performance values
+
+```{r, fig.width=12}
+
+#Load the files
+all_evals<-NULL
+f1_optimal_cutoffs<-NULL
+for(dataset in dataset_names){
+  
+  corrs<-fread(paste0("results/output_",dataset,
+                      "/evaluation/evaluation_cnv_prediction_corr",
+                      dataset_ending[dataset],".tsv"))
+  
+  #Filter for comparison with ground truth
+  corrs<-corrs[corrs$method1 %in% c("scWGS","WGS","WES","GATK")]
+  corrs<-corrs[,c("method2","pearson")]
+  colnames(corrs)<-c("method","value")
+  corrs$metric<-"pearson"
+  corrs$dataset<-dataset
+  
+  #Set negative correlation values to 0
+  corrs$norm_value<-corrs$value
+  corrs$norm_value[corrs$norm_value<0]<-0
+  
+  #Remove row with scWGS/WES/WGS results
+  corrs<-corrs[! corrs$method %in% c("scWGS","WGS","WES","GATK"),]
+  all_evals<-rbind(all_evals,corrs)
+  
+  #Add also AUC values (separate values for gain and loss)
+  auc<-fread(paste0("results/output_",dataset,
+                    "/evaluation/evaluation_cnv_prediction_auc",
+                    dataset_ending[dataset],".txt"))
+  auc$method<-method_names[auc$method]
+  
+  #Get standard AUC values
+  auc_basic<-melt(auc[,c("method","auc_gains","auc_losses")],id.vars="method")
+  auc_basic<-auc_basic[,c("method","value","variable")]
+  colnames(auc_basic)[3]<-"metric"
+  auc_basic$dataset<-dataset
+  
+  #Scale AUC to also range from 0-1 (set value < 0.5 to 0)
+  auc_basic$norm_value<-auc_basic$value
+  auc_basic$norm_value<-(auc_basic$norm_value-0.5)*2
+  auc_basic$norm_value[auc_basic$norm_value<0]<-0
+  
+  all_evals<-rbind(all_evals,auc_basic)
+  
+  #Get AUPRC and truncated AUC values
+  auc_others<-melt(auc[,c("method","auc_gains_trunc","aucpr_gains",
+                          "auc_losses_trunc","aucpr_losses")],id.vars="method")
+  auc_others<-auc_others[,c("method","value","variable")]
+  colnames(auc_others)[3]<-"metric"
+  auc_others$dataset<-dataset
+  auc_others$norm_value<-auc_others$value
+  all_evals<-rbind(all_evals,auc_others)  
+  
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1",
+                   dataset_ending[dataset],".txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  #Save separately the optimal cutoffs
+  f1_cutoff<-sensspecf1[,c("method","cutoff_f1_gain","cutoff_f1_loss")]
+  f1_cutoff$dataset<-dataset
+  f1_optimal_cutoffs<-rbind(f1_optimal_cutoffs,f1_cutoff)
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+  #Get memory and runtime
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/",dataset,"_resources_required.txt")
+  if(file.exists(filename)){
+
+    resources<-fread(filename)
+    resources<-resources[,c("method","runtime_h","max_vms")]
+    
+    #Remove methods run without ground truth
+    resources<-resources[! endsWith(resources$method,"(wo ref)"),]
+    
+    #Convert max_vms from MB to GB (for better readability)
+    resources$max_vms<-resources$max_vms/1024
+    
+    #Scale runtime and memory both between 0 and 1
+    resources$runtime_h_norm<-(resources$runtime_h-min(resources$runtime_h))/
+      (max(resources$runtime_h)-min(resources$runtime_h))
+    resources$max_vms_norm<-(resources$max_vms-min(resources$max_vms))/
+      (max(resources$max_vms)-min(resources$max_vms))
+    
+    #Revert the scale so that efficient methods get a score of 1
+    resources$runtime_h_norm<-1-resources$runtime_h_norm
+    resources$max_vms_norm<-1-resources$max_vms_norm
+    
+    #Some methods are evaluated multiple times (duplicate these entries)
+    resources<-merge(resources,mapping_resources,
+                     by.x="method",by.y="methods_reduced")
+    resources$method<-NULL
+    
+    #Reformat dataframe to match other entries
+    resources_time<-resources[,c("methods_full","runtime_h","runtime_h_norm")]
+    resources_time$metric<-"runtime_h"
+    resources_time$dataset<-dataset
+    colnames(resources_time)<-c("method","value","norm_value","metric","dataset")
+    resources_time<-resources_time[,c("method","value","metric","dataset","norm_value")]
+    all_evals<-rbind(all_evals,resources_time)
+    
+    resources_mem<-resources[,c("methods_full","max_vms","max_vms_norm")]
+    resources_mem$metric<-"max_vms_gb"
+    resources_mem$dataset<-dataset
+    colnames(resources_mem)<-c("method","value","norm_value","metric","dataset")
+    resources_mem<-resources_mem[,c("method","value","metric","dataset","norm_value")]
+    all_evals<-rbind(all_evals,resources_mem)
+    
+    
+  }
+}
+
+per_categorie_metric<-all_evals%>%
+  group_by(method,metric)%>%
+  summarize(value=mean(value,na.rm=TRUE),norm_value=mean(norm_value,na.rm=TRUE))
+per_categorie_metric$dataset<-"combined"
+per_categorie_metric<-per_categorie_metric[,c("method","value",
+                                              "metric","dataset","norm_value")]
+all_evals<-rbind(all_evals,per_categorie_metric)
+
+#Order methods based on overall score
+method_ordering<-per_categorie_metric%>%
+  filter(metric %in% c("pearson","auc_gains","auc_losses"))%>%
+  group_by(method)%>%
+  summarize(norm_value=mean(norm_value))%>%
+  arrange(norm_value)
+
+colnames(method_ordering)<-c("method","value")
+method_ordering$metric<-"overall"
+method_ordering$dataset<-"combined"
+method_ordering$norm_value<-method_ordering$value
+
+all_evals<-rbind(all_evals,method_ordering)
+
+all_evals$method<-factor(all_evals$method,levels=method_ordering$method)
+all_evals$dataset<-factor(all_evals$dataset,levels=c(dataset_names,
+                                                     "combined"))
+
+```
+
+```{r, fig.width=12, fig.height=4}
+
+#Split the large overview into two parts (does not fit into one plot)
+all_evals_part1<-all_evals[all_evals$metric %in% 
+                             c("pearson","auc_gains","auc_losses",
+                               "runtime_h","max_vms_gb","overall"),]
+
+#Plot once for all datasets without the subsampled ones
+all_evals_part1_1<-all_evals_part1[! grepl("sample",all_evals_part1$dataset),]
+g<-ggplot(all_evals_part1_1,aes(y=method,x=dataset,fill=norm_value))+
+  geom_tile()+
+  scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  geom_text(aes(label=round(value,2),
+                color=ifelse(norm_value<0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  facet_grid(~metric,scales="free",space="free")+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position="none")+
+  guides(color="none")
+
+print(g)
+
+# #Plot once for the subsampled SNU601 datasets
+# all_evals_part1_1<-all_evals_part1[grepl("SNU601",all_evals_part1$dataset),]
+# g<-ggplot(all_evals_part1_1,aes(y=method,x=dataset,fill=norm_value))+
+#   geom_tile()+
+#   scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+#   geom_text(aes(label=round(value,2),
+#                 color=ifelse(norm_value<0.6,'white','black')),
+#             size=2.8)+
+#   scale_color_manual(values=c("black","white"))+
+#   facet_grid(~metric,scales="free",space="free")+
+#   theme(axis.title.y = element_blank(),
+#         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+#         legend.position="none")+
+#   guides(color="none")
+# 
+# print(g)
+
+```
+
+```{r, fig.width=12, fig.height=9}
+
+all_evals_part2<-all_evals[all_evals$metric %in% 
+                             c("auc_gains","auc_gains_trunc",
+                               "auc_losses","auc_losses_trunc",
+                               "sens_gains_f1","prec_gains_f1",
+                               "sens_losses_f1","prec_losses_f1",
+                               "pearson","max_f1","runtime_h","max_vms_gb"),]
+
+#Plot once for all datasets without the subsampled ones
+all_evals_part2_1<-all_evals_part2[! grepl("sample",all_evals_part2$dataset),]
+g<-ggplot(all_evals_part2_1,aes(y=method,x=dataset,fill=norm_value))+
+  geom_tile()+
+  scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  geom_text(aes(label=round(value,2),
+                color=ifelse(norm_value<0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  facet_wrap(~metric,ncol=3)+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position="none")+
+  guides(color="none")
+
+print(g)
+
+#Plot once for the subsampled SNU601 datasets
+all_evals_part2_1<-all_evals_part2[grepl("SNU601",all_evals_part2$dataset),]
+g<-ggplot(all_evals_part2_1,aes(y=method,x=dataset,fill=norm_value))+
+  geom_tile()+
+  scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  geom_text(aes(label=round(value,2),
+                color=ifelse(norm_value<0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  facet_wrap(~metric,ncol=4)+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position="none")+
+  guides(color="none")
+
+print(g)
+
+```
+
+```{r, fig.width=12, fig.height=9}
+#Create violin plots to see how much the performance spreads across methods
+all_evals_part3<-all_evals[all_evals$metric %in% 
+                             c("auc_gains","auc_gains_trunc",
+                               "auc_losses","auc_losses_trunc",
+                               "sens_gains_f1","prec_gains_f1",
+                               "sens_losses_f1","prec_losses_f1",
+                               "pearson","max_f1"),]
+
+ggplot(all_evals_part3,aes(x=method,y=value,color=method))+
+  geom_violin()+geom_jitter(alpha=0.5)+
+  facet_wrap(~metric,scales="free",ncol=3)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position = "none")
+
+```
+Plot as included in the ISMB abstract:
+
+```{r, fig.height=10,fig.width=8}
+
+library(RColorBrewer)
+library(ggpubr)
+
+#Import colors from python tab20 (looks nicer)
+#https://matplotlib.org/stable/users/explain/colors/colormaps.html
+python_map<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
+              "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#9edae5",
+              "#d62728","#9467bd","#f7b6d2","#dbdb8d")
+define_colors<-c(brewer.pal(6,"PuRd")[2:6],python_map)#brewer.pal(12,"Set3"))
+
+#Create violin plots to see how much the performance spreads across methods
+all_evals_part3<-all_evals[all_evals$metric %in% 
+                             c("pearson","max_f1",
+                               "auc_gains_trunc","auc_losses_trunc"),]
+
+ordering<-all_evals_part3[all_evals_part3$metric =="max_f1" &
+                            all_evals_part3$dataset=="combined",]
+ordering<-ordering[order(ordering$value),]
+
+all_evals_part3$method<-factor(as.character(all_evals_part3$method),
+                               levels=rev(ordering$method))
+
+rename_metric<-setNames(c("Maximal F1 Score","Correlation",
+                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                        c("max_f1","pearson",
+                               "auc_gains_trunc","auc_losses_trunc"))
+
+all_evals_part3$metric<-rename_metric[as.character(all_evals_part3$metric)]
+all_evals_part3$metric<-factor(all_evals_part3$metric,levels=rename_metric)
+all_evals_part3<-all_evals_part3[all_evals_part3$dataset!="combined",]
+
+g.1<-ggplot(all_evals_part3,aes(x=method,y=value))+
+  geom_violin()+geom_jitter(aes(color=dataset))+
+  scale_color_manual("Dataset",values=define_colors)+
+  xlab("Method")+ylab("Performance value")+
+  facet_wrap(~metric,scales="free",ncol=2)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position = "bottom")
+
+
+mse_perf1<-fread("results/output_pbmc/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf1$ref<-"CD4+ T cells"
+mse_perf2<-fread("results/output_pbmc_monoref/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf2$ref<-"CD14+ Monocytes"
+mse_perf3<-fread("results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf3$ref<-"CD4+ T cells (ext ref)"
+mse_perf4<-fread("results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf4$ref<-"CD14+ Monocytes (ext ref)"
+mse_perf<-rbind(mse_perf1,mse_perf2,mse_perf3,mse_perf4)
+
+#Rename methods
+mse_perf$method<-method_names[mse_perf$method]
+
+#Order them based on RSME (for the CD4T cells)
+mse_perf$method<-factor(mse_perf$method, 
+                        levels=method_names[mse_perf1$method[order(mse_perf1$rmse)]])
+  
+#Change facet order
+mse_perf$ref<-factor(mse_perf$ref,levels=unique(mse_perf$ref))
+
+g.2<-ggplot(mse_perf,aes(x=method,y=rmse,fill=method))+
+  geom_bar(stat="identity")+
+  xlab("Method")+
+  ylab("RMSE")+
+  facet_wrap(~ref,ncol=2)+
+  theme(legend.position = "none",
+        #text=element_text(size=21),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+g<-ggarrange(g.1,g.2,heights=c(0.65,0.35),
+             labels=LETTERS[1:2],font.label=list(size=12),ncol=1)
+print(g)
+
+
+```
+
+
+```{r, fig.width=12, fig.height=4}
+
+# #Combine all metrics in one:
+# all_evals_part3<-all_evals[all_evals$metric %in% 
+#                              c("pearson","max_f1","auc_gains","auc_losses",
+#                                "sens_gains_f1","prec_gains_f1","sens_losses_f1",
+#                                "prec_losses_f1","overall"),]
+# 
+# #Remove the combined column
+# all_evals_part3<-all_evals_part3[all_evals_part3$dataset!="combined" | 
+#                                    all_evals_part3$metric=="overall",]
+
+# g<-ggplot(all_evals_part3,aes(y=method,x=dataset,fill=norm_value))+
+#   geom_tile()+
+#   scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+#   geom_text(aes(label=round(value,2),
+#                 color=ifelse(norm_value<0.6,'white','black')),
+#             size=2.8)+
+#   scale_color_manual(values=c("black","white"))+
+#   facet_grid(~metric,scales="free",space="free")+
+#   theme(axis.title.y = element_blank(),
+#         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+#         legend.position="none")+
+#   guides(color="none")
+# 
+# print(g)
+
+```
+
+```{r, fig.width=12, fig.height=6}
+
+# #Remove the combined column
+# all_evals_part3<-all_evals_part3[all_evals_part3$metric!="overall",]
+# g<-ggplot(all_evals_part3,aes(y=method,x=dataset,fill=norm_value))+
+#   geom_tile()+
+#   scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+#   geom_text(aes(label=round(value,2),
+#                 color=ifelse(norm_value<0.6,'white','black')),
+#             size=2.8)+
+#   scale_color_manual(values=c("black","white"))+
+#   facet_wrap(~metric,ncol=4)+
+#   theme(axis.title.y = element_blank(),
+#         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+#         legend.position="none")+
+#   guides(color="none")
+# 
+# print(g)
+```
+
+## Compare performance to general dataset characteritics
+
+Values for general characteristics are extracted before in the script "check_dataset_characteristics.R".
+Ignore all values related to the reference dataset (not enough independent data points).
+
+```{r,fig.width=12}
+dataset_char<-fread("data/general_dataset_characteristics.tsv")
+
+#Delete mean_drop_gene (redundant to mean_drop_cell)
+dataset_char$mean_drop_gene<-NULL
+
+plot_char<-merge(all_evals[all_evals$metric == "pearson",],dataset_char,
+                 by="dataset")
+plot_char_f1<-merge(all_evals[all_evals$metric == "max_f1",],dataset_char,
+                 by="dataset")
+
+#Collect the correlation metrics
+corr_feature_pearson<-NULL
+corr_feature_f1<-NULL
+
+```
+
+### Number cancer cells
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=num_cancer_cells,color=dataset))+
+  geom_point()+ geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,num_cancer_cells))%>%
+  as.data.frame()
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_cancer_cells"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1 score
+ggplot(plot_char_f1,aes(x=value,y=num_cancer_cells,color=dataset))+
+  geom_point()+ geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,num_cancer_cells))%>%
+  as.data.frame()
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_cancer_cells"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Number reference cells
+
+```{r,fig.width=12,eval=FALSE}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=num_ref_cells,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,num_ref_cells))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_ref_cells"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate maximal F1 score
+ggplot(plot_char_f1,aes(x=value,y=num_ref_cells,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,num_ref_cells))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_ref_cells"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean UMI counts in cancer cells
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_umi_cancer,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_cancer))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_cancer"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_umi_cancer,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_cancer))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_cancer"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean UMI counts in reference cells
+
+```{r,fig.width=12, eval=FALSE}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_umi_ref,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_ref))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_ref"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_umi_ref,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_ref))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_ref"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean UMI counts in all cells
+
+```{r,fig.width=12, eval=FALSE}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_umi_total,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_total))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_total"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_umi_total,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_umi_total))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_umi_total"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean coefficient of variation
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_coef_var,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_coef_var))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_coef_var"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_coef_var,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_coef_var))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_coef_var"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean dropout rate per cell
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_drop_cell,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_drop_cell))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_drop_cell"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_drop_cell,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_drop_cell))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_drop_cell"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Mean number of non-zero genes per cell
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_char,aes(x=value,y=mean_nonZeroGenes_cell,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_nonZeroGenes_cell))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_nonZeroGenes_cell"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_char_f1,aes(x=value,y=mean_nonZeroGenes_cell,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,mean_nonZeroGenes_cell))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"mean_nonZeroGenes_cell"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+
+### Mean number of total counts (UMI per cell * number cells)
+
+```{r,fig.width=12}
+#Calculate additionally the total counts of the dataset
+plot_char$total_cancer_umi<-plot_char$num_cancer_cells*plot_char$mean_umi_cancer
+
+ggplot(plot_char,aes(x=value,y=total_cancer_umi,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_char%>%
+  group_by(method)%>%
+  summarize(cor(value,total_cancer_umi))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"total_cancer_umi"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Calculate additionally the total counts of the dataset
+plot_char_f1$total_cancer_umi<-plot_char_f1$num_cancer_cells*plot_char_f1$mean_umi_cancer
+
+ggplot(plot_char_f1,aes(x=value,y=total_cancer_umi,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")+ylab("Total UMI counts")
+
+corr<-plot_char_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,total_cancer_umi))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"total_cancer_umi"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+#Get also values for AUC trunc gain and AUC trunc losses
+for(metr in c("auc_gains_trunc","auc_losses_trunc")){
+  
+  plot_char2 <-merge(all_evals[all_evals$metric == metr,],dataset_char,
+                 by="dataset")
+  plot_char2$total_cancer_umi<-plot_char2$num_cancer_cells*plot_char2$mean_umi_cancer
+  
+  g<-ggplot(plot_char2,aes(x=value,y=total_cancer_umi,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+    facet_wrap(~method)+xlab(metr)
+  print(g)
+
+  p<-plot_char2%>%
+    group_by(method)%>%
+    summarize(cor(value,total_cancer_umi,use="complete.obs"))
+  print(p)
+
+}
+```
+
+Select specifically the SNU601 cell line to prove the trend:
+
+```{r}
+
+plot_char_f1_filtered<-plot_char_f1[startsWith(plot_char_f1$dataset,"SNU601"),]
+ggplot(plot_char_f1_filtered,aes(x=value,y=total_cancer_umi,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")+ylab("Total UMI counts")
+
+```
+
+Add more information into the mix:
+
+```{r,fig.width=12}
+
+plot_char$wgs_type<-dataset_groundtruth[plot_char$dataset]
+
+ggplot(plot_char,aes(x=value,y=total_cancer_umi,color=wgs_type))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+plot_char2 <-merge(all_evals[all_evals$metric == "max_f1",],dataset_char,
+                 by="dataset")
+plot_char2$total_cancer_umi<-plot_char2$num_cancer_cells*plot_char2$mean_umi_cancer
+plot_char2$wgs_type<-dataset_groundtruth[plot_char2$dataset]
+
+ggplot(plot_char2,aes(x=value,y=total_cancer_umi,color=wgs_type))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")+ylab("Total UMI counts")
+
+```
+
+
+
+## Compare performance to ground truth CNV structure
+
+```{r,fig.width=4}
+  
+bin_counts<-NULL
+for(dataset in dataset_names){
+  
+  filename<-paste0("results/output_",dataset,
+                      "/evaluation/outputs_allmethods_combined",
+                      dataset_ending[dataset],".tsv")
+  
+  tmp<-fread(filename)
+  cnvs_gt<-tmp[,"wgs_mean",with=FALSE]
+  cnvs_binary<-ifelse(cnvs_gt>2.5,3,ifelse(cnvs_gt<1.5,1,2))
+  
+  #Check the number of breakpoints
+  cnvs_shifted1<-cnvs_binary[1:(nrow(cnvs_binary)-1)]
+  cnvs_shifted2<-cnvs_binary[2:nrow(cnvs_binary)]
+  
+  bin_counts<-rbind(bin_counts,
+                    data.frame(num_gain=sum(cnvs_binary==3),
+                               num_base=sum(cnvs_binary==2),
+                               num_loss=sum(cnvs_binary==1),
+                               num_coverage=length(cnvs_binary),
+                               num_breakpoints=sum(cnvs_shifted1!=cnvs_shifted2),
+                               dataset=dataset))
+}
+
+#Calculate the fractions
+bin_counts$fraction_gain<-bin_counts$num_gain / (bin_counts$num_gain +
+                                                   bin_counts$num_base +
+                                                   bin_counts$num_loss)
+bin_counts$fraction_loss<-bin_counts$num_loss / (bin_counts$num_gain +
+                                                   bin_counts$num_base +
+                                                   bin_counts$num_loss)
+bin_counts$fraction_cnvs<-bin_counts$fraction_gain+bin_counts$fraction_loss
+
+kable(bin_counts)
+
+plot_bins<-melt(bin_counts[,c("dataset","fraction_gain","fraction_loss")],
+                id.vars=c("dataset"))
+
+ggplot(plot_bins,aes(x=dataset,y=value,fill=variable))+
+  geom_bar(stat="identity")+ylim(0,1)+
+  ylab("Relative abundance of CNV bins")+
+  theme(legend.position="bottom",
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+ggplot(bin_counts,aes(x=dataset,y=num_breakpoints,fill=dataset))+
+  geom_bar(stat="identity")+scale_y_log10()+
+  ylab("Number of breakpoints")+
+  theme(legend.position="none",
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+```
+
+Check whether there is a correlation of UMI coverage and number of bins:
+
+```{r}
+
+plot_bins<-merge(dataset_char,bin_counts,by="dataset")
+
+ggplot(plot_bins,aes(x=num_coverage,y=mean_umi_cancer,color=dataset))+
+  geom_point()
+
+plot_bins$cancer_coverage<-plot_bins$mean_umi_cancer * plot_bins$num_cancer_cells
+ggplot(plot_bins,aes(x=num_coverage,y=cancer_coverage,color=dataset))+
+  geom_point()+xlab("Number genomic bins")+ylab("Coverage cancer matrix (total UMI counts)")
+```
+
+Same plot but without MCF7:
+
+```{r}
+ggplot(plot_bins[plot_bins$dataset!="MCF7",],aes(x=num_coverage,y=cancer_coverage,color=dataset))+
+  geom_point()+xlab("Number genomic bins")+ylab("Coverage cancer matrix (total UMI counts)")
+
+print("Correlation:")
+cor(plot_bins$num_coverage,
+    plot_bins$cancer_coverage)
+
+print("Correlation without MCF7:")
+cor(plot_bins$num_coverage[plot_bins$dataset!="MCF7"],
+    plot_bins$cancer_coverage[plot_bins$dataset!="MCF7"])
+
+# plot_bins$total_coverage<-plot_bins$mean_umi_total * (plot_bins$num_cancer_cells+plot_bins$num_ref_cells)
+# ggplot(plot_bins,aes(x=num_coverage,y=total_coverage,color=dataset))+
+#   geom_point()
+# 
+# ggplot(plot_bins,aes(x=num_coverage,y=mean_nonZeroGenes_cell,color=dataset))+
+#   geom_point()
+
+```
+
+Check breakpoints vs number of gain regions (second plot without WES datasets)
+
+```{r}
+
+ggplot(plot_bins,aes(x=fraction_gain,y=num_breakpoints,color=dataset))+
+  geom_point()+scale_y_log10()
+
+ggplot(plot_bins[!plot_bins$dataset %in% c("BCC06","BCC06post","MM"),],
+       aes(x=fraction_gain,y=num_breakpoints,color=dataset))+
+  geom_point()
+
+```
+
+### Fraction of gain CNVs
+
+```{r,fig.width=12}
+#Compare results using correlation 
+plot_bins<-merge(all_evals[all_evals$metric == "pearson",],bin_counts,
+                 by="dataset")
+
+ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_bins%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_gain))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_gain"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Compare results using F1 score 
+plot_bins_f1<-merge(all_evals[all_evals$metric == "max_f1",],bin_counts,
+                 by="dataset")
+
+ggplot(plot_bins_f1,aes(x=value,y=fraction_gain,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_bins_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_gain))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_gain"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Fraction of loss CNVs
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_bins%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_loss))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_loss"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate maximal F1 score
+ggplot(plot_bins_f1,aes(x=value,y=fraction_loss,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_bins_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_loss))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_loss"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Fraction of CNVs in general
+
+```{r,fig.width=12}
+
+#Evaluate correlation
+ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_bins%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_cnvs))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_cnvs"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_bins_f1,aes(x=value,y=fraction_cnvs,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_bins_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,fraction_cnvs))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"fraction_cnvs"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Total covered regions
+
+```{r}
+
+#Evaluate correlation
+ggplot(plot_bins,aes(x=value,y=num_coverage,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_bins%>%
+  group_by(method)%>%
+  summarize(cor(value,num_coverage))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_genomic_regions"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_bins_f1,aes(x=value,y=num_coverage,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_bins_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,num_coverage))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_genomic_regions"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Number of breakpoints
+
+Only include (sc)WGS data:
+
+```{r}
+
+plot_bins_wgs<-plot_bins[! plot_bins$dataset %in% c("BCC06","BCC06post","MM"),]
+plot_bins_f1_wgs<-plot_bins_f1[! plot_bins_f1$dataset %in% c("BCC06","BCC06post","MM"),]
+  
+#Evaluate correlation
+ggplot(plot_bins_wgs,aes(x=value,y=num_breakpoints,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_bins_wgs%>%
+  group_by(method)%>%
+  summarize(cor(value,num_breakpoints))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_breakpoints"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate F1
+ggplot(plot_bins_f1_wgs,aes(x=value,y=num_breakpoints,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_bins_f1_wgs%>%
+  group_by(method)%>%
+  summarize(cor(value,num_breakpoints))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"num_breakpoints"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+
+```{r,fig.width=12}
+# #Compare results
+# plot_bins<-merge(all_evals[all_evals$metric == "auc_gains",],bin_counts,
+#                  by="dataset")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
+
+```
+
+```{r,fig.width=12}
+# #Compare results
+# plot_bins<-merge(all_evals[all_evals$metric == "auc_losses",],bin_counts,
+#                  by="dataset")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
+# 
+# ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
+#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
+
+```
+
+### Combine all
+
+```{r,fig.width=12}
+
+plot_char<-merge(plot_char,bin_counts,by="dataset")
+
+ggplot(plot_char,aes(x=value,y=total_cancer_umi,color=fraction_cnvs))+
+  scale_color_viridis()+
+  geom_point()+facet_wrap(~method)+xlab("Correlation")+ylab("Total UMI counts")
+
+
+plot_char_f1<-merge(plot_char_f1,bin_counts,by="dataset")
+
+ggplot(plot_char_f1,aes(x=value,y=total_cancer_umi,color=fraction_cnvs))+
+  scale_color_viridis("Fraction of genomic\nregions with CNVs")+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")+ylab("Coverage (UMI counts)")
+
+```
+
+## Stratify method performance
+
+### based on UMI counts
+
+```{r}
+
+test_straty<-plot_char_f1[,c("dataset","method","value","total_cancer_umi")]
+cutoff_total_umi<-median(test_straty$total_cancer_umi)
+test_straty$class<-ifelse(test_straty$total_cancer_umi<cutoff_total_umi,
+                          "low_UMI","high_UMI")
+test<-test_straty%>%
+  group_by(method,class)%>%
+  summarize(mean_f1=mean(value),sd_f1=sd(value))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=method))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1))+facet_wrap(~class)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=class))+
+  geom_bar(stat = "identity",position="dodge")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1),position="dodge")+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+```
+
+### based on CNV profile
+
+Median cutoff: 
+
+```{r}
+
+test_straty<-plot_char_f1[,c("dataset","method","value","fraction_cnvs")]
+cutoff<-median(test_straty$fraction_cnvs)
+test_straty$class<-ifelse(test_straty$fraction_cnvs<cutoff,
+                          "few_cnvs","many_cnvs")
+test<-test_straty%>%
+  group_by(method,class)%>%
+  summarize(mean_f1=mean(value),sd_f1=sd(value))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=method))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1))+facet_wrap(~class)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=class))+
+  geom_bar(stat = "identity",position="dodge")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1),position="dodge")+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+```
+
+Extreme cutoff: 
+
+```{r}
+
+test_straty<-plot_char_f1[,c("dataset","method","value","fraction_cnvs")]
+test_straty$class<-ifelse(test_straty$fraction_cnvs<0.6,
+                          "few_cnvs","many_cnvs")
+test<-test_straty%>%
+  group_by(method,class)%>%
+  summarize(mean_f1=mean(value),sd_f1=sd(value))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=method))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1))+facet_wrap(~class)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+ggplot(test,aes(x=method,y=mean_f1,fill=class))+
+  geom_bar(stat = "identity",position="dodge")+
+  geom_errorbar(aes(x=method,ymin=mean_f1-sd_f1,ymax=mean_f1+sd_f1),position="dodge")+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,hjust=1,vjust=1))
+
+```
+
+## Compare performance for SNP calling
+
+```{r}
+snp_calls<-fread("results/snp_calling_summary.tsv")
+
+kable(snp_calls)
+
+snp_calls<-merge(snp_calls,dataset_char,by="dataset")
+
+
+ggplot(snp_calls,aes(x=numbat_nsnps,y=casper_nsnps,color=dataset))+
+  geom_point()
+
+ggplot(snp_calls,aes(x=numbat_mean_DP,y=casper_mean_DP,color=dataset))+
+  geom_point()
+
+ggplot(snp_calls,aes(x=numbat_mean_DP*numbat_cells_wsnp,y=casper_mean_DP,color=dataset))+
+  geom_point()
+
+ggplot(snp_calls,aes(x=numbat_mean_DP,y=mean_umi_cancer,color=dataset))+
+  geom_point()
+
+ggplot(snp_calls,aes(x=numbat_cells_wsnp,y=num_cancer_cells,color=dataset))+
+  geom_point()
+
+```
+
+### Numbat cells with snps
+```{r, fig.width=12,fig.height=5}
+
+#Evaluate correlation
+plot_snp<-merge(all_evals[all_evals$metric == "pearson",],snp_calls,
+                 by="dataset")
+plot_snp<-plot_snp[plot_snp$method %in% c("CaSpER","Numbat (CNV)"),]
+
+ggplot(plot_snp,aes(x=value,y=numbat_cells_wsnp,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_snp%>%
+  group_by(method)%>%
+  summarize(cor(value,numbat_cells_wsnp))
+kable(corr)
+colnames(corr)<-c("method","cor")
+corr$type<-"numbat_cells_wsnp"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate the maximal F1 score
+plot_snp_f1<-merge(all_evals[all_evals$metric == "max_f1",],snp_calls,
+                 by="dataset")
+plot_snp_f1<-plot_snp_f1[plot_snp_f1$method %in% c("CaSpER","Numbat (CNV)"),]
+
+ggplot(plot_snp_f1,aes(x=value,y=numbat_cells_wsnp,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_snp_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,numbat_cells_wsnp))
+kable(corr)
+colnames(corr)<-c("method","cor")
+corr$type<-"numbat_cells_wsnp"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Numbat total depth
+
+```{r, fig.width=12,fig.height=5}
+
+plot_snp$numbat_total_dp<-plot_snp$numbat_cells_wsnp*plot_snp$numbat_cells_wsnp
+ggplot(plot_snp,aes(x=value,y=numbat_mean_DP*numbat_cells_wsnp,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+plot_snp%>%
+  group_by(method)%>%
+  summarize(cor(value,numbat_total_dp))
+```
+
+### Numbat number of SNPs
+
+```{r, fig.width=12,fig.height=5}
+
+#Evaluate the correlation
+ggplot(plot_snp,aes(x=value,y=numbat_nsnps,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_snp%>%
+  group_by(method)%>%
+  summarize(cor(value,numbat_nsnps))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"numbat_nsnps"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate the maximal F1 score
+ggplot(plot_snp_f1,aes(x=value,y=numbat_nsnps,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Maximal F1 score")
+
+corr<-plot_snp_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,numbat_nsnps))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"numbat_nsnps"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Casper number of SNPs
+
+```{r, fig.width=12,fig.height=5}
+
+#Evaluate the correlation
+ggplot(plot_snp,aes(x=value,y=casper_nsnps,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_snp%>%
+  group_by(method)%>%
+  summarize(cor(value,casper_nsnps))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"casper_nsnps"
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Evaluate the maximal F1 score
+ggplot(plot_snp_f1,aes(x=value,y=casper_nsnps,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+corr<-plot_snp_f1%>%
+  group_by(method)%>%
+  summarize(cor(value,casper_nsnps))
+kable(corr)
+
+colnames(corr)<-c("method","cor")
+corr$type<-"casper_nsnps"
+corr_feature_f1<-rbind(corr_feature_f1,corr)
+
+```
+
+### Casper mean depth
+
+```{r, fig.width=12,fig.height=5}
+ggplot(plot_snp,aes(x=value,y=casper_mean_DP,color=dataset))+
+  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
+  facet_wrap(~method)+xlab("Correlation")
+
+plot_snp%>%
+  group_by(method)%>%
+  summarize(cor(value,casper_mean_DP))
+```
+
+## Overview plots fo all the tests
+
+```{r}
+
+g<-ggplot(corr_feature_pearson,aes(x=method,y=type,fill=cor))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset characteristics")+
+  ggtitle("Correlation between characterstics and correlation")+
+  #scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor,2),
+                color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+print(g)
+
+g<-ggplot(corr_feature_f1,aes(x=method,y=type,fill=cor))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset characteristics")+
+  ggtitle("Correlation between characterstics and maximal F1 score")+
+  #scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor,2),
+                color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+print(g)
+
+```
+
+## Test everything using a linear regression model
+
+```{r}
+all_charac<-merge(dataset_char,bin_counts,by="dataset")
+kable(all_charac)
+
+ggplot(all_charac,aes(x=mean_umi_cancer,y=mean_coef_var,color=dataset))+
+  geom_point()
+
+pred_model<-merge(all_evals[all_evals$metric == "pearson",],all_charac,
+                 by="dataset")
+
+model<-lm(value~num_cancer_cells+num_ref_cells+mean_umi_cancer+mean_umi_ref+
+            mean_coef_var+fraction_gain+fraction_loss+mean_umi_total,
+   data=pred_model)
+
+summary(model)
+
+ggplot(pred_model,aes(x=value,y=mean_umi_cancer,color=dataset))+
+  geom_point()+xlab("Correlation")
+
+ggplot(pred_model,aes(x=value,y=mean_umi_ref,color=dataset))+
+  geom_point()+ylab("Correlation")
+
+model<-lm(value~mean_umi_cancer+mean_umi_ref+mean_coef_var,
+   data=pred_model)
+
+summary(model)
+
+```
+
+Large overview plot with all analyses:
+
+```{r,fig.height=10,fig.width=12}
+
+plot_charac<-pred_model[,!c("metric","norm_value","num_gain",
+                            "num_base","num_loss")]
+colnames(plot_charac)[colnames(plot_charac)=="value"]<-"corr"
+
+plot_charac<-melt(plot_charac,id.vars=c("dataset","method","corr"))
+
+ggplot(plot_charac,aes(x=corr,y=value,color=dataset,shape=method))+
+  geom_point()+
+  xlab("Pearson correlation")+ylab("")+
+  facet_wrap(~variable,scales="free")+
+  theme(legend.position = "bottom")+
+  guides(color=guide_legend(nrow=2),shape=guide_legend(nrow=2))
+
+```
+
+```{r,fig.height=10,fig.width=12}
+
+pred_model<-merge(all_evals[all_evals$metric == "auc_gains",],all_charac,
+                 by="dataset")
+
+plot_charac<-pred_model[,!c("metric","norm_value","num_gain",
+                            "num_base","num_loss")]
+colnames(plot_charac)[colnames(plot_charac)=="value"]<-"corr"
+
+plot_charac<-melt(plot_charac,id.vars=c("dataset","method","corr"))
+
+ggplot(plot_charac,aes(x=corr,y=value,color=dataset,shape=method))+
+  geom_point()+
+  xlab("AUC gains")+ylab("")+
+  facet_wrap(~variable,scales="free")+
+  theme(legend.position = "bottom")+
+  guides(color=guide_legend(nrow=2),shape=guide_legend(nrow=2))
+
+```
+
+```{r,fig.height=10,fig.width=12}
+
+pred_model<-merge(all_evals[all_evals$metric == "auc_losses",],all_charac,
+                 by="dataset")
+
+plot_charac<-pred_model[,!c("metric","norm_value","num_gain",
+                            "num_base","num_loss")]
+colnames(plot_charac)[colnames(plot_charac)=="value"]<-"corr"
+
+plot_charac<-melt(plot_charac,id.vars=c("dataset","method","corr"))
+
+ggplot(plot_charac,aes(x=corr,y=value,color=dataset,shape=method))+
+  geom_point()+
+  xlab("AUC losses")+ylab("")+
+  facet_wrap(~variable,scales="free")+
+  theme(legend.position = "bottom")+
+  guides(color=guide_legend(nrow=2),shape=guide_legend(nrow=2))
+
+```

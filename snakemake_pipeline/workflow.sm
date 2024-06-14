@@ -1,0 +1,1471 @@
+# ------------------------------------------------------------------------------
+# Pipeline to benchmark scRNA-seq CNV callers with different datasets
+# ------------------------------------------------------------------------------
+
+localrules: run_honeybadger_preprocessing, run_casper_gene_annot, CONICSmat_import_data
+
+# ------------------------------------------------------------------------------
+# Run inferCNV 
+# ------------------------------------------------------------------------------
+
+rule run_infercnv:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		gene_pos = "data/annotations/hg38_gencode_v27.txt"
+	output:
+		cnv_file = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		states_file = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt"
+	log:
+		"logs/infercnv_{dataset}.log"
+	benchmark:
+		"benchmarks/infercnv_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/inferCNV.R"
+
+# ------------------------------------------------------------------------------
+# Run copyKat (two different modes: with and without specifying the reference cells)
+# ------------------------------------------------------------------------------
+
+rule run_copykat:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt"
+	output:
+		cnv_file = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_results.txt",
+		pred_file = "results/output_{dataset}/copykat/{dataset}_copykat_prediction.txt",
+		cnv_per_cell = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt"
+	log:
+		"logs/copykat_{dataset}.log"
+	benchmark:
+		"benchmarks/copykat_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/copykat.R"
+
+rule run_copykat_predict_cancer_cells:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt"
+	output:
+		cnv_file = "results/output_{dataset}/copykat_predict_cancer_cells/{dataset}_copykat_CNA_results.txt",
+		pred_file = "results/output_{dataset}/copykat_predict_cancer_cells/{dataset}_copykat_prediction.txt",
+		cnv_per_cell = "results/output_{dataset}/copykat_predict_cancer_cells/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt"
+	log:
+		"logs/copykat_predict_{dataset}.log"
+	benchmark:
+		"benchmarks/copykat_predict_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/copykat.R"
+
+# ------------------------------------------------------------------------------
+# Run SCEVAN (two different modes: with and without specifying the reference cells)
+# Remark: "pred_file" needs to be saved in the same directory as the "cnv_file"
+# ------------------------------------------------------------------------------
+
+rule run_SCEVAN:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt"
+	output:
+		cnv_file = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		pred_file = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		expr = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData"
+	log:
+		"logs/scevan_{dataset}.log"
+	benchmark:
+		"benchmarks/scevan_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00",
+		find_clones = "TRUE"
+	script:
+		"scripts/scevan.R"
+
+rule run_SCEVAN_predict_cancer_cells:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt"
+	output:
+		cnv_file = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_subclone1_CN.seg",
+		pred_file = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_scevan_prediction.txt",
+		expr = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_CNAmtxSubclones.RData",
+		gene_pos = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_count_mtx_annot.RData"
+	log:
+		"logs/scevan_predict_{dataset}.log"
+	benchmark:
+		"benchmarks/scevan_predict_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00",
+		find_clones = "TRUE"
+	script:
+		"scripts/scevan.R"
+
+
+# ------------------------------------------------------------------------------
+# Run HoneyBadger (the expression model)
+# Remark: due to specification of our cluster, the first rule is run locally
+#         (as it requires internet access not possible otherwise)
+# To get hg19 annotations, set params$biomart = "https://grch37.ensembl.org"
+# ------------------------------------------------------------------------------
+
+rule run_honeybadger_preprocessing:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt"
+	output:
+		hb_object = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_setup.RDS"
+	log:
+		"logs/honeybadger_expr_part1_{dataset}.log"
+	benchmark:
+		"benchmarks/honeybadger_expr_part1_{dataset}_benchmark.txt"
+	params:
+		biomart = "https://www.ensembl.org"
+	script:
+		"scripts/honeybadger_setup.R"
+
+rule run_honeybadger_expr:
+	input:
+		hb_object = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_setup.RDS"
+	output:
+		cnv_file = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_cnvs.txt",
+		plot_expr = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_expr_plot.pdf",
+		plot_cnv_tree ="results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_cnv_tree_plot.pdf",
+		hb_obj_final = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_final.RDS"
+	log:
+		"logs/honeybadger_expr_part2_{dataset}.log"
+	benchmark:
+		"benchmarks/honeybadger_expr_part2_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "48:00:00"
+	script:
+		"scripts/honeybadger.R"
+
+# ------------------------------------------------------------------------------
+# Run Casper (3 steps: calculate BAF, get gene annotations and run the methods)
+# Remark: due to specification of our cluster, the second rule is run locally
+#         (as it requires internet access not possible otherwise)
+# ------------------------------------------------------------------------------
+
+rule run_BAFextract_casper:
+	input:
+		bam_file = "data/input_{dataset}/possorted_genome_bam.bam",
+	output:
+		out_dir = directory("results/output_{dataset}/casper/{dataset}_bins_BAFExtract"),
+		af = "results/output_{dataset}/casper/{dataset}_BAFExtract/{dataset}_BAFExtract.af"
+	log:
+		"logs/casper_preprocess_{dataset}.log"
+	benchmark:
+		"benchmarks/casper_preprocess_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00",
+		genome_list = "data/annotations/genome_input_BAFExtract_hg38/hg38_genome_list",
+		genome = "data/annotations/genome_input_BAFExtract_hg38/hg38"
+	shell:
+		r"""mkdir -p {output.out_dir}
+			samtools view {input.bam_file} | tools/BAFExtract/bin/BAFExtract -generate_compressed_pileup_per_SAM stdin {params.genome_list} {output.out_dir} 50 0
+			tools/BAFExtract/bin/BAFExtract -get_SNVs_per_pileup {params.genome_list} {output.out_dir} {params.genome} 20 4 0.1 {output.af}
+		"""
+
+rule run_casper_gene_annot:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt"
+	output:
+		gene_annot = "results/output_{dataset}/casper/gene_annotation_casper_{dataset}.tsv"
+	log:
+		"logs/casper_gene_annot_{dataset}.log"
+	benchmark:
+		"benchmarks/casper_gene_annot_{dataset}_benchmark.txt"
+	script:
+		"scripts/casper_gene_annotations.R"
+
+rule run_casper:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		gene_annot = "results/output_{dataset}/casper/gene_annotation_casper_{dataset}.tsv",
+		af = "results/output_{dataset}/casper/{dataset}_BAFExtract/{dataset}_BAFExtract.af"
+	output:
+		casper_cellmatrix = "results/output_{dataset}/casper/{dataset}_casper_cell_matrix.tsv",
+		casper_pseudobulk =  "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		casper_clusters = "results/output_{dataset}/casper/{dataset}_casper_hclust.RDS",
+		casper_plot_density = "results/output_{dataset}/casper/{dataset}_casper_densities.pdf",
+		casper_plot_large_events = "results/output_{dataset}/casper/{dataset}_casper_large_events.png",
+		casper_plot_heatmap = "results/output_{dataset}/casper/{dataset}_casper_heatmap.png",
+		casper_plot_baf = "results/output_{dataset}/casper/{dataset}_casper_baf.png"
+	log:
+		"logs/casper_{dataset}.log"
+	benchmark:
+		"benchmarks/casper_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 64000
+	params:
+		segment_gamma = 7,
+		time = "48:00:00"
+	script:
+		"scripts/casper.R"
+
+
+rule run_casper_strict_filter:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		gene_annot = "results/output_{dataset}/casper/gene_annotation_casper_{dataset}.tsv",
+		af = "results/output_{dataset}/casper/{dataset}_BAFExtract/{dataset}_BAFExtract.af"
+	output:
+		casper_cellmatrix = "results/output_{dataset}/casper_strict/{dataset}_casper_cell_matrix.tsv",
+		casper_pseudobulk =  "results/output_{dataset}/casper_strict/{dataset}_casper_pseudobulk_aggregate.RDS",
+		casper_clusters = "results/output_{dataset}/casper_strict/{dataset}_casper_hclust.RDS",
+		casper_plot_density = "results/output_{dataset}/casper_strict/{dataset}_casper_densities.pdf",
+		casper_plot_large_events = "results/output_{dataset}/casper_strict/{dataset}_casper_large_events.png",
+		casper_plot_heatmap = "results/output_{dataset}/casper_strict/{dataset}_casper_heatmap.png",
+		casper_plot_baf = "results/output_{dataset}/casper_strict/{dataset}_casper_baf.png"
+	log:
+		"logs/casp_strict_filter_{dataset}.log"
+	benchmark:
+		"benchmarks/casper_{dataset}_benchmark_strict_filter.txt"
+	threads: 1
+	resources:
+		mem_mb = 64000
+	params:
+		segment_gamma = 7,
+		expr_cutoff = 4.5,
+		time = "48:00:00"
+	script:
+		"scripts/casper.R"
+
+# ------------------------------------------------------------------------------
+# Run Numbat 
+# (second option: run all cells together (external reference) and predict cancer cells)
+# ------------------------------------------------------------------------------
+
+rule numbat_preprocessing:
+	input:
+		bam_file = "data/input_{dataset}/possorted_genome_bam.bam",
+		barcodes_df = "data/input_{dataset}/barcodes.tsv.gz",
+		snp_vcf = "data/annotations/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz",
+		eagle_gmap = "data/annotations/genetic_map_hg38_withX.txt.gz"
+	output:
+		df_allele = "results/output_{dataset}/numbat/{dataset}_allele_counts.tsv.gz"
+	log:
+		"logs/numbat_preprocessing_{dataset}.log"
+	benchmark:
+		"benchmarks/numbat_preprocessing_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00",
+		ref_panel = "data/annotations/1000G_hg38",
+		out_dir = "results/output_{dataset}/numbat/"
+	shell:
+		r"""Rscript scripts/pileup_and_phase.R \
+			--label {wildcards.dataset} \
+			--samples {wildcards.dataset} \
+			--bams {input.bam_file} \
+			--barcodes {input.barcodes_df} \
+			--outdir {params.out_dir} \
+			--gmap {input.eagle_gmap} \
+			--eagle tools/Eagle_v2.4.1/eagle \
+			--snpvcf {input.snp_vcf} \
+			--paneldir {params.ref_panel} \
+			--ncores {threads} > {log}
+		"""
+
+rule run_numbat:
+	input:
+		count_mat = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		df_allele = "results/output_{dataset}/numbat/{dataset}_allele_counts.tsv.gz"
+	output:
+		cnv_expr = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz"
+	log:
+		"logs/numbat_{dataset}.log"
+	benchmark:
+		"benchmarks/numbat_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "48:00:00"
+	script:
+		"scripts/numbat.R"
+
+rule run_numbat_predict_cancer_cells:
+	input:
+		count_mat = "data/input_{dataset}/count_matrix.txt",
+		df_allele = "results/output_{dataset}/numbat/{dataset}_allele_counts.tsv.gz"
+	output:
+		cnv_expr = "results/output_{dataset}/numbat_predict_cancer_cells/gexp_roll_wide.tsv.gz"
+	log:
+		"logs/numbat_predict_{dataset}.log"
+	benchmark:
+		"benchmarks/numbat_predict_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/numbat_woref.R"
+
+# ------------------------------------------------------------------------------
+# Run CONICSmat (two different modes: with and without specifying the reference cells)
+# Due to specification of our cluster, first rule is run locally, as internet
+# access is required
+# ------------------------------------------------------------------------------
+
+rule CONICSmat_import_data:
+	input:
+		expression_df = "data/input_{dataset}/count_matrix.txt"
+	output:
+		gene_pos_df = "results/output_{dataset}/CONICSmat/gene_annotation_conicsmat_{dataset}.tsv"
+	log:
+		"logs/CONICSmat_import_{dataset}.log"
+	benchmark:
+		"benchmarks/CONICSmat_import_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/CONICSmat_import_data.R"
+
+rule run_CONICSmat:
+	input:
+		expression_df = "data/input_{dataset}/count_matrix.txt",
+		chrom_pos_df = "data/annotations/chromosome_arm_positions_grch38.txt",
+		gene_pos_df = "results/output_{dataset}/CONICSmat/gene_annotation_conicsmat_{dataset}.tsv",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt"
+	output:
+		filtering_dims = "results/output_{dataset}/CONICSmat/{dataset}_filtering_dims.tsv",
+		cnv_types = "results/output_{dataset}/CONICSmat/cnv_types.tsv",
+		tumor_pred = "results/output_{dataset}/CONICSmat/tumor_pred.tsv",
+		cnv_binary_mat = "results/output_{dataset}/CONICSmat/cnv_binary.tsv",
+		p_val = "results/output_{dataset}/CONICSmat/cnv_pval.tsv",
+		post_prob = "results/output_{dataset}/CONICSmat/cnv_posterior_probs.tsv",
+		boxplot_path = "results/output_{dataset}/CONICSmat/{dataset}_boxplot.png",
+		heatmap_expr_path = "results/output_{dataset}/CONICSmat/{dataset}_heatmap_expr.png",
+		histo_path = "results/output_{dataset}/CONICSmat/{dataset}_histogram.png"
+	log:
+		"logs/CONICSmat_{dataset}.log"
+	benchmark:
+		"benchmarks/CONICSmat_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/CONICSmat.R"
+
+rule run_CONICSmat_predict_cancer_cells:
+	input:
+		expression_df = "data/input_{dataset}/count_matrix.txt",
+		chrom_pos_df = "data/annotations/chromosome_arm_positions_grch38.txt",
+		gene_pos_df = "results/output_{dataset}/CONICSmat/gene_annotation_conicsmat_{dataset}.tsv"
+	output:
+		filtering_dims = "results/output_{dataset}/CONICSmat_predict_cancer_cells/{dataset}_filtering_dims.tsv",
+		cnv_types = "results/output_{dataset}/CONICSmat_predict_cancer_cells/cnv_types.tsv",
+		tumor_pred = "results/output_{dataset}/CONICSmat_predict_cancer_cells/tumor_pred.tsv",
+		cnv_binary_mat = "results/output_{dataset}/CONICSmat_predict_cancer_cells/cnv_binary.tsv",
+		p_val = "results/output_{dataset}/CONICSmat_predict_cancer_cells/cnv_pval.tsv",
+		post_prob = "results/output_{dataset}/CONICSmat_predict_cancer_cells/cnv_posterior_probs.tsv",
+		boxplot_path = "results/output_{dataset}/CONICSmat_predict_cancer_cells/{dataset}_boxplot.png",
+		heatmap_expr_path = "results/output_{dataset}/CONICSmat_predict_cancer_cells/{dataset}_heatmap_expr.png",
+		histo_path = "results/output_{dataset}/CONICSmat_predict_cancer_cells/{dataset}_histogram.png"
+	log:
+		"logs/CONICSmat_predict_{dataset}.log"
+	benchmark:
+		"benchmarks/CONICSmat_predict_{dataset}_benchmark.txt"
+	threads: 1
+	resources:
+		mem_mb = 32000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/CONICSmat.R"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the SNU601 dataset
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_SNU601:		
+	input:
+ 		"results/output_SNU601/infercnv/infercnv.observations.txt",
+		"results/output_SNU601/copykat/SNU601_copykat_CNA_results.txt",
+		"results/output_SNU601/copykat_predict_cancer_cells/SNU601_copykat_CNA_results.txt",
+		"results/output_SNU601/scevan/output/SNU601_subclone1_CN.seg",
+		"results/output_SNU601/casper/SNU601_casper_pseudobulk_aggregate.RDS",
+		"results/output_SNU601/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_SNU601/CONICSmat/cnv_types.tsv",
+		"results/output_SNU601/CONICSmat_predict_cancer_cells/tumor_pred.tsv"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the MCF7 dataset
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_MCF7:		
+	input:
+ 		"results/output_MCF7/infercnv/infercnv.observations.txt",
+		"results/output_MCF7/copykat/MCF7_copykat_CNA_results.txt",
+		"results/output_MCF7/scevan/output/MCF7_subclone1_CN.seg",
+		"results/output_MCF7/honeybadger_expr/MCF7_honeybadger_cnvs.txt",
+		"results/output_MCF7/casper/MCF7_casper_pseudobulk_aggregate.RDS",
+		"results/output_MCF7/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_MCF7/CONICSmat/cnv_types.tsv"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the MM dataset
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_MM:		
+	input:
+		"results/output_MM/infercnv/infercnv.observations.txt",
+		"results/output_MM/copykat/MM_copykat_CNA_results.txt",
+		"results/output_MM/scevan/output/MM_subclone1_CN.seg",
+		"results/output_MM/honeybadger_expr/MM_honeybadger_cnvs.txt",
+		"results/output_MM/casper/MM_casper_pseudobulk_aggregate.RDS",
+		"results/output_MM/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_MM/CONICSmat/cnv_types.tsv",
+		"results/output_MM/copykat_predict_cancer_cells/MM_copykat_CNA_results.txt",
+		"results/output_MM/scevan_predict_cancer_cells/output/MM_subclone1_CN.seg"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the COLO320 dataset
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_COLO320:		
+	input:
+		"results/output_COLO320/infercnv/infercnv.observations.txt",
+		"results/output_COLO320/copykat/COLO320_copykat_CNA_results.txt",
+		"results/output_COLO320/scevan/output/COLO320_subclone1_CN.seg",
+		"results/output_COLO320/honeybadger_expr/COLO320_honeybadger_cnvs.txt",
+		"results/output_COLO320/casper/COLO320_casper_pseudobulk_aggregate.RDS",
+		"results/output_COLO320/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_COLO320/CONICSmat/cnv_types.tsv"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the BCC dataset - sample 06 pre treatment
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_BCC06:		
+	input:
+		"results/output_BCC06/infercnv/infercnv.observations.txt",
+		"results/output_BCC06/copykat/BCC06_copykat_CNA_results.txt",
+		"results/output_BCC06/scevan/output/BCC06_subclone1_CN.seg",
+		"results/output_BCC06/casper/BCC06_casper_pseudobulk_aggregate.RDS",
+		"results/output_BCC06/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_BCC06/CONICSmat/cnv_types.tsv"
+
+
+# ------------------------------------------------------------------------------
+# Running all methods on the BCC dataset - sample 06 post treatment
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_BCC06post:		
+	input:
+		"results/output_BCC06post/infercnv/infercnv.observations.txt",
+		"results/output_BCC06post/copykat/BCC06post_copykat_CNA_results.txt",
+		"results/output_BCC06post/scevan/output/BCC06post_subclone1_CN.seg",
+		"results/output_BCC06post/casper/BCC06post_casper_pseudobulk_aggregate.RDS",
+		"results/output_BCC06post/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_BCC06post/CONICSmat/cnv_types.tsv"
+
+
+# ------------------------------------------------------------------------------
+# Running one method on BCC05 and BCC07 to have the different profiles for all cells
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_BCC0507:		
+	input:
+		"results/output_BCC05/copykat/BCC05_copykat_CNA_results.txt",
+		"results/output_BCC07/copykat/BCC07_copykat_CNA_results.txt"
+
+
+# ------------------------------------------------------------------------------
+# Running all methods on the RCC86 dataset
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_RCC86:		
+	input:
+		"results/output_RCC86/infercnv/infercnv.observations.txt",
+		"results/output_RCC86/copykat/RCC86_copykat_CNA_results.txt",
+		"results/output_RCC86/scevan/output/RCC86_subclone1_CN.seg",
+		"results/output_RCC86/CONICSmat/cnv_types.tsv"
+
+
+# ------------------------------------------------------------------------------
+# Running all methods on the PBMC dataset - check performance on a diploid sample
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_pbmc:		
+	input:
+		"results/output_pbmc/infercnv/infercnv.observations.txt",
+		"results/output_pbmc/copykat/pbmc_copykat_CNA_results.txt",
+		"results/output_pbmc/scevan/output/pbmc_subclone1_CN.seg",
+		"results/output_pbmc/CONICSmat/cnv_types.tsv",
+		"results/output_pbmc/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_pbmc/casper/pbmc_casper_pseudobulk_aggregate.RDS"
+
+# ------------------------------------------------------------------------------
+# Running all methods on the BCC dataset (all samples combined) -
+# to evaluate how well substuctures (subclones/here different samples) 
+# can be identified
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_BCC:		
+	input:
+		"results/output_BCC/infercnv/infercnv.observations.txt",
+		"results/output_BCC/copykat/BCC_copykat_CNA_results.txt",
+		"results/output_BCC/scevan/output/BCC_subclone1_CN.seg",
+		"results/output_BCC/CONICSmat/cnv_types.tsv",
+		"results/output_BCC/numbat/gexp_roll_wide.tsv.gz",
+		"results/output_BCC/casper/BCC_casper_pseudobulk_aggregate.RDS"
+
+# ------------------------------------------------------------------------------
+# Evaluate the results
+# ------------------------------------------------------------------------------
+
+#Identify all methods that were run succssfully on the SNU601 dataset
+METHODS = glob_wildcards("benchmarks/{i}_SNU601_benchmark.txt").i
+
+#Evaluate runtime and memory on the SNU601 dataset
+rule evaluate_resources_SNU601:
+	input:
+		expand("benchmarks/{i}_SNU601_benchmark.txt",i=METHODS)
+	output:
+		plot = "results/output_SNU601/evaluation/SNU601_resources_required.png",
+		file = "results/output_SNU601/evaluation/SNU601_resources_required.txt"
+	log:
+		"logs/evaluate_resources_SNU601.log",
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule evaluate_cancer_cell_prediction:
+	input:
+		annot_truth = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		copykat_pred = "results/output_{dataset}/copykat_predict_cancer_cells/{dataset}_copykat_prediction.txt",
+		scevan_pred = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_scevan_prediction.txt",
+		numbat_pred = "results/output_{dataset}/numbat_predict_cancer_cells/gexp_roll_wide.tsv.gz"
+	output:
+		text = "results/output_{dataset}/evaluation/evaluation_cancer_prediction_{dataset}.tsv",
+		plot = "results/output_{dataset}/evaluation/evaluation_cancer_prediction_{dataset}.png"
+	log:
+		"logs/evaluate_prediction_cancer_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_cancer_cell_prediction.R"
+
+		
+rule evaluate_cnv_prediction_wgs:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		genomic_ground_truth = "data/{dataset}_WGS_groundtruth/wgs_results_formated.csv",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		CONICSmat_filtered_dims = "results/output_{dataset}/CONICSmat/{dataset}_filtering_dims.tsv",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv"
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined.tsv",
+		text_filter = "results/output_{dataset}/evaluation/filtering_results.tsv",
+		plot_filter = "results/output_{dataset}/evaluation/filtering_results.pdf",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap.pdf",
+		text_scaling = "results/output_{dataset}/evaluation/scaling_factors.tsv",
+		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr.pdf",
+		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc.txt",
+		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc.pdf",
+		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1.txt",
+		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1.pdf",
+		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1.pdf"
+	log:
+		"logs/evaluate_prediction_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/evaluate_results.R"
+
+rule evaluate_cnv_prediction_permethod:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		genomic_ground_truth = "data/{dataset}_WGS_groundtruth/wgs_results_formated.csv",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz"
+	output:
+		res = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_permethod.tsv"
+	log:
+		"logs/evaluate_prediction_permethod_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/evaluate_results_permethod.R"
+
+rule evaluate_cnv_prediction_percell:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		combined_res = "results/output_{dataset}/evaluation/outputs_allmethods_combined.tsv",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper_grange = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		casper_cells = "results/output_{dataset}/casper/{dataset}_casper_cell_matrix.tsv",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv"
+	output:
+		total_res = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_results.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_corr.pdf",
+		plot_auc_gain = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_auc_gain.pdf",
+		plot_auc_loss = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_auc_loss.pdf",
+		plot_auc_trunc_gain = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_auc_trunc_gain.pdf",
+		plot_auc_trunc_loss = "results/output_{dataset}/evaluation/{dataset}_evaluation_per_cell_auc_trunc_loss.pdf"
+	log:
+		"logs/evaluate_prediction_per_cell_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/evaluate_per_cell.R"
+
+rule all_evaluations_SNU601:		
+	input:
+ 		"results/output_SNU601/evaluation/SNU601_resources_required.png",
+		"results/output_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601/evaluation/evaluation_cnv_prediction_permethod.tsv",
+		"results/output_SNU601/evaluation/SNU601_evaluation_per_cell_results.tsv",
+		"results/output_SNU601/casper_strict/SNU601_casper_cell_matrix.tsv" 
+
+rule all_evaluations_SNU601_subsampled:
+	input:
+		"results/output_SNU601_sample20/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_sample40/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_sample60/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_sample80/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_sample20/evaluation/evaluation_cnv_prediction_permethod.tsv",
+		"results/output_SNU601_sample40/evaluation/evaluation_cnv_prediction_permethod.tsv",
+		"results/output_SNU601_sample60/evaluation/evaluation_cnv_prediction_permethod.tsv",
+		"results/output_SNU601_sample80/evaluation/evaluation_cnv_prediction_permethod.tsv",
+		"results/output_SNU601/evaluation/evaluation_cnv_prediction_permethod.tsv"
+
+# ------------------------------------------------------------------------------
+# Evaluate different SN601 CNV predictions with different reference sets
+# ------------------------------------------------------------------------------
+
+rule all_evaluations_SNU601_diffrefs:
+	input:
+		"results/output_SNU601_epiendo/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_fibsom/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_immune/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU601_MM/evaluation/evaluation_cnv_prediction_auc.pdf"
+
+# -------------------------------------------------------------------------------
+# Evaluate the NCIN87 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the NCIN87 dataset
+METHODS_NCIN87 = glob_wildcards("benchmarks/{i}_NCIN87_benchmark.txt").i
+
+#Evaluate runtime and memory on the NCIN87 dataset
+rule evaluate_resources_NCIN87:
+	input:
+		expand("benchmarks/{i}_NCIN87_benchmark.txt",i=METHODS_NCIN87)
+	output:
+		plot = "results/output_NCIN87/evaluation/NCIN87_resources_required.png",
+		file = "results/output_NCIN87/evaluation/NCIN87_resources_required.txt"
+	log:
+		"logs/evaluate_resources_NCIN87.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the MKN45 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the MKN45 dataset
+METHODS_MKN45 = glob_wildcards("benchmarks/{i}_MKN45_benchmark.txt").i
+
+#Evaluate runtime and memory on the MKN45 dataset
+rule evaluate_resources_MKN45:
+	input:
+		expand("benchmarks/{i}_MKN45_benchmark.txt",i=METHODS_MKN45)
+	output:
+		plot = "results/output_MKN45/evaluation/MKN45_resources_required.png",
+		file = "results/output_MKN45/evaluation/MKN45_resources_required.txt"
+	log:
+		"logs/evaluate_resources_MKN45.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the NUGC4 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the NUGC4 dataset
+METHODS_NUGC4 = glob_wildcards("benchmarks/{i}_NUGC4_benchmark.txt").i
+
+#Evaluate runtime and memory on the NUGC4 dataset
+rule evaluate_resources_NUGC4:
+	input:
+		expand("benchmarks/{i}_NUGC4_benchmark.txt",i=METHODS_NUGC4)
+	output:
+		plot = "results/output_NUGC4/evaluation/NUGC4_resources_required.png",
+		file = "results/output_NUGC4/evaluation/NUGC4_resources_required.txt"
+	log:
+		"logs/evaluate_resources_NUGC4.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the SNU638 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the SNU638 dataset
+METHODS_SNU638 = glob_wildcards("benchmarks/{i}_SNU638_benchmark.txt").i
+
+#Evaluate runtime and memory on the SNU638 dataset
+rule evaluate_resources_SNU638:
+	input:
+		expand("benchmarks/{i}_SNU638_benchmark.txt",i=METHODS_SNU638)
+	output:
+		plot = "results/output_SNU638/evaluation/SNU638_resources_required.png",
+		file = "results/output_SNU638/evaluation/SNU638_resources_required.txt"
+	log:
+		"logs/evaluate_resources_SNU638.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the KATOIII dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the KATOIII dataset
+METHODS_KATOIII = glob_wildcards("benchmarks/{i}_KATOIII_benchmark.txt").i
+
+#Evaluate runtime and memory on the KATOIII dataset
+rule evaluate_resources_KATOIII:
+	input:
+		expand("benchmarks/{i}_KATOIII_benchmark.txt",i=METHODS_KATOIII)
+	output:
+		plot = "results/output_KATOIII/evaluation/KATOIII_resources_required.png",
+		file = "results/output_KATOIII/evaluation/KATOIII_resources_required.txt"
+	log:
+		"logs/evaluate_resources_KATOIII.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the HGC27 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the HGC27 dataset
+METHODS_HGC27 = glob_wildcards("benchmarks/{i}_HGC27_benchmark.txt").i
+
+#Evaluate runtime and memory on the HGC27 dataset
+rule evaluate_resources_HGC27:
+	input:
+		expand("benchmarks/{i}_HGC27_benchmark.txt",i=METHODS_HGC27)
+	output:
+		plot = "results/output_HGC27/evaluation/HGC27_resources_required.png",
+		file = "results/output_HGC27/evaluation/HGC27_resources_required.txt"
+	log:
+		"logs/evaluate_resources_HGC27.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the SNU16 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the SNU16 dataset
+METHODS_SNU16 = glob_wildcards("benchmarks/{i}_SNU16_benchmark.txt").i
+
+#Evaluate runtime and memory on the SNU16 dataset
+rule evaluate_resources_SNU16:
+	input:
+		expand("benchmarks/{i}_SNU16_benchmark.txt",i=METHODS_SNU16)
+	output:
+		plot = "results/output_SNU16/evaluation/SNU16_resources_required.png",
+		file = "results/output_SNU16/evaluation/SNU16_resources_required.txt"
+	log:
+		"logs/evaluate_resources_SNU16.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# -------------------------------------------------------------------------------
+# Evaluate the SNU668 dataset
+# -------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the SNU668 dataset
+METHODS_SNU668 = glob_wildcards("benchmarks/{i}_SNU668_benchmark.txt").i
+
+#Evaluate runtime and memory on the SNU668 dataset
+rule evaluate_resources_SNU668:
+	input:
+		expand("benchmarks/{i}_SNU668_benchmark.txt",i=METHODS_SNU668)
+	output:
+		plot = "results/output_SNU668/evaluation/SNU668_resources_required.png",
+		file = "results/output_SNU668/evaluation/SNU668_resources_required.txt"
+	log:
+		"logs/evaluate_resources_SNU668.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+# ------------------------------------------------------------------------------
+# Evaluate the MCF7 dataset
+# ------------------------------------------------------------------------------
+
+#Identify all methods that were run successfully on the MCF7 dataset
+METHODS_MCF7 = glob_wildcards("benchmarks/{i}_MCF7_benchmark.txt").i
+
+#Evaluate runtime and memory on the MCF7 dataset
+rule evaluate_resources_MCF7:
+	input:
+		expand("benchmarks/{i}_MCF7_benchmark.txt",i=METHODS_MCF7)
+	output:
+		plot = "results/output_MCF7/evaluation/MCF7_resources_required.png",
+		file = "results/output_MCF7/evaluation/MCF7_resources_required.txt"
+	log:
+		"logs/evaluate_resources_MCF7.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule all_evaluations_MCF7:		
+	input:
+		"results/output_MCF7/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7/evaluation/MCF7_resources_required.png"
+
+# ------------------------------------------------------------------------------
+# Evaluate different MCF7 CNV predictions with different reference sets
+# ------------------------------------------------------------------------------
+
+rule all_evaluations_MCF7_diffrefs:
+	input:
+		"results/output_MCF7_endothelial/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7_immune/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7_stromal/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7_gastric/evaluation/evaluation_cnv_prediction_auc.pdf"
+
+# ------------------------------------------------------------------------------
+# Rule for evaluation when using WES results (necessary for MM)
+# ------------------------------------------------------------------------------
+
+rule evaluate_cnv_prediction_wes:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		genomic_ground_truth = "data/{dataset}_WES_GATK/{dataset}_tumor_clean.called.seg",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		CONICSmat_filtered_dims = "results/output_{dataset}/CONICSmat/{dataset}_filtering_dims.tsv",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv"
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_wes.tsv",
+		text_filter = "results/output_{dataset}/evaluation/filtering_results_wes.tsv",
+		plot_filter = "results/output_{dataset}/evaluation/filtering_results_wes.pdf",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_wes.pdf",
+		text_scaling = "results/output_{dataset}/evaluation/scaling_factors_wes.tsv",
+		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_wes.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_wes.pdf",
+		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_wes.txt",
+		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_wes.txt",
+		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_wes.pdf",
+		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1_wes.pdf"
+	log:
+		"logs/evaluate_prediction_wes_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00",
+		genomic_format = "GATK",
+		genomic_name = "WES"
+	script:
+		"scripts/evaluate_results.R"
+
+
+rule evaluate_cnv_prediction_wes_autoannot:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		wes = "data/{dataset}_WES_GATK/{dataset}_tumor_clean.called.seg",
+		copykat_wref = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		copykat_woref = "results/output_{dataset}/copykat_predict_cancer_cells/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan_clone1_wref = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot_wref = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		scevan_clone1_woref = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_subclone1_CN.seg",
+		scevan_annot_woref = "results/output_{dataset}/scevan_predict_cancer_cells/output/{dataset}_scevan_prediction.txt",
+		numbat_obj_wref = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		numbat_obj_woref = "results/output_{dataset}/numbat_predict_cancer_cells/gexp_roll_wide.tsv.gz",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv_wref = "results/output_{dataset}/CONICSmat/cnv_types.tsv",
+		CONICSmat_cnv_woref = "results/output_{dataset}/CONICSmat_predict_cancer_cells/cnv_types.tsv"
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_wesautoannot.tsv",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_wesautoannot.pdf",
+		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_wesautoannot.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_wesautoannot.pdf",
+		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_wesautoannot.txt",
+		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_wesautoannot.txt",
+		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_wesautoannot.pdf",
+		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1_wesautoannot.pdf"
+	log:
+		"logs/evaluate_prediction_wes_autoannot_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00"
+	script:
+		"scripts/evaluate_results_WES_withautoannot.R"
+
+#Identify all methods that were run succssfully on the MM dataset
+METHODS_MM = glob_wildcards("benchmarks/{i}_MM_benchmark.txt").i
+
+#Evaluate runtime and memory on the MM dataset
+rule evaluate_resources_MM:
+	input:
+		expand("benchmarks/{i}_MM_benchmark.txt",i=METHODS_MM)
+	output:
+		plot = "results/output_MM/evaluation/MM_resources_required.png",
+		file = "results/output_MM/evaluation/MM_resources_required.txt"
+	log:
+		"logs/evaluate_resources_MM.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule all_evaluations_MM:		
+	input:
+		"results/output_MM/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM/evaluation/evaluation_cancer_prediction_MM.png",
+		"results/output_MM/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		"results/output_MM/evaluation/MM_resources_required.png"
+
+# ------------------------------------------------------------------------------
+# Evaluate different MM CNV predictions with different reference sets
+# ------------------------------------------------------------------------------
+
+rule all_evaluations_MM_diffrefs:
+	input:
+		"results/output_MM_tcell/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM_bcell/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM_mono/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM_SNU601/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM_gastric/evaluation/evaluation_cnv_prediction_auc_wes.pdf"
+
+# ------------------------------------------------------------------------------
+# Rule for evaluation when using WGS results from CNVkit (necessary for COLO320)
+# ------------------------------------------------------------------------------
+
+rule evaluate_cnv_prediction_cnvkit_COLO320:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		genomic_ground_truth = "data/COLO320_WGS/COLO320_HSR_WGS.aln.sort.rmdup.call.cns",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		CONICSmat_filtered_dims = "results/output_{dataset}/CONICSmat/{dataset}_filtering_dims.tsv",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv"
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_cnvkit.tsv",
+		text_filter = "results/output_{dataset}/evaluation/filtering_results_cnvkit.tsv",
+		plot_filter = "results/output_{dataset}/evaluation/filtering_results_cnvkit.pdf",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_cnvkit.pdf",
+		text_scaling = "results/output_{dataset}/evaluation/scaling_factors_cnvkit.tsv",
+		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_cnvkit.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_cnvkit.pdf",
+		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_cnvkit.txt",
+		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_cnvkit.pdf",
+		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_cnvkit.txt",
+		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_cnvkit.pdf",
+		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1_cnvkit.pdf"
+	log:
+		"logs/evaluate_prediction_cnvkit_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00",
+		genomic_format = "CNVkit"
+	script:
+		"scripts/evaluate_results.R"
+
+#Identify all methods that were run succssfully on the COLO320 dataset
+METHODS_COLO320 = glob_wildcards("benchmarks/{i}_COLO320_benchmark.txt").i
+
+#Evaluate runtime and memory on the COLO320 dataset
+rule evaluate_resources_COLO320:
+	input:
+		expand("benchmarks/{i}_COLO320_benchmark.txt",i=METHODS_COLO320)
+	output:
+		plot = "results/output_COLO320/evaluation/COLO320_resources_required.png",
+		file = "results/output_COLO320/evaluation/COLO320_resources_required.txt"
+	log:
+		"logs/evaluate_resources_COLO320.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule all_evaluations_COLO320:		
+	input:
+		"results/output_COLO320/evaluation/evaluation_cnv_prediction_auc_cnvkit.pdf",
+		"results/output_COLO320/evaluation/COLO320_resources_required.png"
+
+# ------------------------------------------------------------------------------
+# Rule for evaluation of BCC sample6 pre-treatment (BCC06) - WES data
+# ------------------------------------------------------------------------------
+
+#Identify all methods that were run succssfully on the BCC06 dataset
+METHODS_BCC06 = glob_wildcards("benchmarks/{i}_BCC06_benchmark.txt").i
+
+#Evaluate runtime and memory on the BCC06 dataset
+rule evaluate_resources_BCC06:
+	input:
+		expand("benchmarks/{i}_BCC06_benchmark.txt",i=METHODS_BCC06)
+	output:
+		plot = "results/output_BCC06/evaluation/BCC06_resources_required.png",
+		file = "results/output_BCC06/evaluation/BCC06_resources_required.txt"
+	log:
+		"logs/evaluate_resources_BCC06.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule all_evaluations_BCC06:		
+	input:
+		"results/output_BCC06/evaluation/evaluation_cancer_prediction_BCC06.png",
+		"results/output_BCC06/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		"results/output_BCC06/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06/evaluation/BCC06_resources_required.png"
+
+# ------------------------------------------------------------------------------
+# Rule for evaluation of BCC sample6 post-treatment (BCC06post) - WES data
+# ------------------------------------------------------------------------------
+
+#Identify all methods that were run succssfully on the BCC06post dataset
+METHODS_BCC06post = glob_wildcards("benchmarks/{i}_BCC06post_benchmark.txt").i
+
+#Evaluate runtime and memory on the BCC06post dataset
+rule evaluate_resources_BCC06post:
+	input:
+		expand("benchmarks/{i}_BCC06post_benchmark.txt",i=METHODS_BCC06post)
+	output:
+		plot = "results/output_BCC06post/evaluation/BCC06post_resources_required.png",
+		file = "results/output_BCC06post/evaluation/BCC06post_resources_required.txt"
+	log:
+		"logs/evaluate_resources_BCC06post.log"
+	threads:1
+	resources:
+		mem_mb = 8000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_runtime_memory.R"
+
+rule all_evaluations_BCC06post:		
+	input:
+		"results/output_BCC06post/evaluation/evaluation_cancer_prediction_BCC06post.png",
+		"results/output_BCC06post/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		"results/output_BCC06post/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06post/evaluation/BCC06post_resources_required.png"
+
+
+# ------------------------------------------------------------------------------
+# Evaluate BCC06 CNV predictions with different reference sets
+# ------------------------------------------------------------------------------
+
+rule all_evaluations_BCC06_diffrefs:
+	input:
+		"results/output_BCC06_immune/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06_TS/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06_SNU601/evaluation/evaluation_cnv_prediction_auc_wes.pdf"
+
+
+# ------------------------------------------------------------------------------
+# Run standard analyses of all cancer datasets together
+# ------------------------------------------------------------------------------
+
+rule all_evaluations_cancer:
+	input:
+		"results/output_SNU601/evaluation/SNU601_resources_required.png",
+		"results/output_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MKN45/evaluation/MKN45_resources_required.png",
+		"results/output_MKN45/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_NCIN87/evaluation/NCIN87_resources_required.png",
+		"results/output_NCIN87/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_NUGC4/evaluation/NUGC4_resources_required.png",
+		"results/output_NUGC4/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU638/evaluation/SNU638_resources_required.png",
+		"results/output_SNU638/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_KATOIII/evaluation/KATOIII_resources_required.png",
+		"results/output_KATOIII/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_HGC27/evaluation/HGC27_resources_required.png",
+		"results/output_HGC27/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU16/evaluation/SNU16_resources_required.png",
+		"results/output_SNU16/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_SNU668/evaluation/SNU668_resources_required.png",
+		"results/output_SNU668/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7/evaluation/evaluation_cnv_prediction_auc.pdf",
+		"results/output_MCF7/evaluation/MCF7_resources_required.png",
+		"results/output_MM/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_MM/evaluation/MM_resources_required.png",
+		"results/output_COLO320/evaluation/evaluation_cnv_prediction_auc_cnvkit.pdf",
+		"results/output_COLO320/evaluation/COLO320_resources_required.png",
+		"results/output_BCC06/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06/evaluation/BCC06_resources_required.png",
+		"results/output_BCC06post/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
+		"results/output_BCC06post/evaluation/BCC06post_resources_required.png"
+
+rule all_evaluations_cancer_woref:
+	input:
+		"results/output_MM/evaluation/evaluation_cancer_prediction_MM.png",
+		"results/output_MM/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		"results/output_BCC06post/evaluation/evaluation_cancer_prediction_BCC06post.png",
+		"results/output_BCC06post/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf",
+		"results/output_BCC06/evaluation/evaluation_cancer_prediction_BCC06.png",
+		"results/output_BCC06/evaluation/evaluation_cnv_prediction_auc_wesautoannot.pdf"
+
+
+# ------------------------------------------------------------------------------
+# Evaluate diploid predictions (healthy PBMC sample)
+# ------------------------------------------------------------------------------
+
+rule evaluate_cnv_prediction_diploid:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_aggregate.RDS",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtxSubclones.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_clone1 = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
+		scevan_annot = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		numbat_obj = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		CONICSmat_chr_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv",
+		scaling_ref = "results/output_SNU601/evaluation/scaling_factors.tsv"
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_diploid.tsv",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_diploid.pdf",
+		text_rmse = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv",
+		plot_rmse = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf",
+	log:
+		"logs/evaluate_prediction_diploid_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluate_results_diploid.R"
+
+rule all_evaluation_pbmc:
+	input:
+		"results/output_pbmc/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf",
+		"results/output_pbmc_monoref/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf",
+		"results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf",
+		"results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf",
+		"results/output_pbmc_ext_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.pdf"
+
+
+# ------------------------------------------------------------------------------
+# Evaluate subclonal structure (mixing BCC donors to have a ground truth)
+# ------------------------------------------------------------------------------
+
+rule evaluate_subclones:
+	input:
+		expr_mat = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		annot_truth = "data/input_{dataset}/{dataset}_metadata.txt",
+		clusters_copykat = "results/output_{dataset}/copykat/{dataset}_copykat_clustering_results.rds",
+		matrix_copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		clones_numbat =  "results/output_{dataset}/numbat/clone_post_2.tsv",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		clusters_infercnv = "results/output_{dataset}/infercnv/run.final.infercnv_obj",
+		clones_scevan = "results/output_{dataset}/scevan_find_clones/output/{dataset}_scevan_prediction.txt",
+		scevan_subclones = "results/output_{dataset}/scevan_find_clones/output/{dataset}_subclone1_CN.seg",
+		l_CONICSmat = "results/output_{dataset}/CONICSmat/cnv_posterior_probs.tsv",
+		lr_CONICSmat = "results/output_{dataset}/CONICSmat/CONICSmat_CNV_BIC_LR.txt",
+		genes_CONICSmat="results/output_{dataset}/CONICSmat/gene_annotation_conicsmat_{dataset}.tsv",
+		CONICSmat_chrom_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
+		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv",
+		clusters_casper = "results/output_{dataset}/casper/{dataset}_casper_clusters.tsv",
+		clusters_pbulk_casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_clones.tsv"
+	output:
+		merged_clusters = "results/output_{dataset}/evaluation/allclusters_combined.tsv",
+		merged_results = "results/output_{dataset}/evaluation/allclones_combined.tsv",
+		conicsmat_histo = "results/output_{dataset}/CONICSmat/histogram_clones.pdf",
+		text_ari = "results/output_{dataset}/evaluation/evaluation_clustering.tsv",
+		plot_ari = "results/output_{dataset}/evaluation/evaluation_clustering.pdf",
+		plot_clust_dist = "results/output_{dataset}/evaluation/cluster_distribution_subclones.pdf",
+		plot_clones_clustered = "results/output_{dataset}/evaluation/cnvs_per_subclone_clustered.pdf"
+	log:
+		"logs/evaluate_subclones_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "1:00:00",
+		dataset = "{dataset}"
+	script:
+		"scripts/evaluate_subclones.R"
+
+rule all_evaluate_subclones_BCC:
+	input:
+		"results/output_BCC/evaluation/evaluation_clustering.pdf"
+
+# ------------------------------------------------------------------------------
+# In-depth evaluation of InferCNV results 
+# (exploring potential reasons for false classifications)
+# ------------------------------------------------------------------------------
+
+rule evaluate_inferCNV_detailed:
+	input:
+		matrix = "data/input_{dataset}/count_matrix.txt",
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		scwgs_truth = "data/{dataset}_scWGS_results/wgs_results_aneufinder_pseudobulk.csv",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_gene_pos = "data/annotations/gencode_v19_gene_pos.txt"
+	output:
+		gene_dist = "results/output_{dataset}/evaluation/evaluation_InferCNV/gene_dist_bins.png",
+		plot_count_dist = "results/output_{dataset}/evaluation/evaluation_InferCNV/count_dist.png",
+		plot_count_norm = "results/output_{dataset}/evaluation/evaluation_InferCNV/count_dist_norm.png",
+		overview_plot = "results/output_{dataset}/evaluation/evaluation_InferCNV/heatmap_factors.pdf",
+		boxplot_loss = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_expr_dist_loss.png",
+		boxplot_loss_lfc = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_lfc_loss.png",
+		boxplot_gain = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_expr_dist_gain.png",
+		boxplot_gain_lfc = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_lfc_gain.png"
+	log:
+		"logs/evaluate_inferCNV_detailed_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "1:00:00"
+	script:
+		"scripts/evaluation_in_depth_InferCNV.R"
+
+rule evaluate_detailed_SNU601:
+	input:
+		"results/output_SNU601/evaluation/evaluation_InferCNV/heatmap_factors.pdf"
+
+
+# ------------------------------------------------------------------------------
+# Running all methods on the COLO320 dataset - using most diploid cells as reference
+# (according to a script from Paulina)
+# ------------------------------------------------------------------------------
+
+rule all_cnv_methods_COLO320woref:		
+	input:
+		"results/output_COLO320woref/infercnv/infercnv.observations.txt",
+		"results/output_COLO320woref/copykat/COLO320woref_copykat_CNA_results.txt",
+		"results/output_COLO320woref/scevan/output/COLO320woref_Clonal_CN.seg"
+
+
+# ------------------------------------------------------------------------------
+# Evaluate Paulina's results without the necessity to run all methods
+# ------------------------------------------------------------------------------
+
+rule evaluate_cnv_prediction_COLO320woref:
+	input:
+		annot = "data/input_{dataset}/sample_annotation.txt",
+		ref_groups = "data/input_{dataset}/ref_groups.txt",
+		genomic_ground_truth = "data/COLO320_WGS/COLO320_HSR_WGS.aln.sort.rmdup.call.cns",
+		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
+		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
+		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
+		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtx.RData",
+		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
+		scevan_vega = "results/output_{dataset}/scevan/output/ {dataset}onlytumor vega_output",
+	output:
+		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_woref.tsv",
+		text_filter = "results/output_{dataset}/evaluation/filtering_results_woref.tsv",
+		plot_filter = "results/output_{dataset}/evaluation/filtering_results_woref.pdf",
+		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_woref.pdf",
+		text_scaling = "results/output_{dataset}/evaluation/scaling_factors_woref.tsv",
+		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_woref.tsv",
+		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_woref.pdf",
+		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_woref.txt",
+		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_woref.pdf",
+		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_woref.txt",
+		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_woref.pdf",
+		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1_woref.pdf"
+	log:
+		"logs/evaluate_prediction_woref_{dataset}.log"
+	threads: 1
+	resources:
+		mem_mb = 24000
+	params:
+		time = "24:00:00",
+		genomic_format = "CNVkit"
+	script:
+		"scripts/evaluate_results.R"
+
+
+rule all_evaluate_COLO320woref:
+	input:
+		merged_results = "results/output_COLO320woref/evaluation/outputs_allmethods_combined_woref.tsv"

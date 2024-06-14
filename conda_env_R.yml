@@ -1,0 +1,31 @@
+name: r_env2
+channels:
+  - anaconda
+  - bioconda
+  - conda-forge
+  - defaults
+  - r
+dependencies:
+  - bioconductor-biomart #required by HoneyBadger
+  - bioconductor-clusterprofiler
+  - bioconductor-genomicfeatures # required by HoneyBadger
+  - bioconductor-genomicranges
+  - bioconductor-ggtree #required by SCEVAN
+  - bioconductor-infercnv
+  - bioconductor-org.hs.eg.db #for GO enrichment
+  - bioconductor-txdb.hsapiens.ucsc.hg19.knowngene #required by HoneyBadger
+  - cellsnp-lite #required by numbat
+  - leidenalg #required by inferCNV (although not documented)
+  - python-igraph #required by inferCNV (although not documented)
+  - r-base=4.1.0
+  - r-data.table
+  - r-ggdendro
+  - r-devtools
+  - r-dplyr
+  - r-ggplot2
+  - r-ggpubr #required by Casper
+  - r-reshape2 # required by HoneyBadger
+  - r-reticulate=1.27 #required for InferCNV (trouble with the newest version)
+  - r-viridis
+  - samtools #required for Casper 
+  - snakemake
