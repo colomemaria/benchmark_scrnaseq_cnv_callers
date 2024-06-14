@@ -11,10 +11,10 @@ Work in progress, publication link will follow here as soon as available.
 
 The following README contains:
 
-1. [Project description](## Project description)
-2. [Main results](## Main results)
-3. [Setup of the pipeline](## Setup of the pipeline)
-4. [Running the pipeline](## Running the pipeline)
+1. [Project description](##project-description)
+2. [Main results](##main-results)
+3. [Setup of the pipeline](##setup-of-the-pipeline)
+4. [Running the pipeline](##running-the-pipeline)
 
 ## Project description
 
@@ -86,9 +86,9 @@ For the CNV caller CaSpER, additionally the tool [BAFExtract](https://github.com
 
 ## Running the pipeline
 
-To systematically evaluate the different methods in different settings, a snakemake pipeline is created, with the option to benchmark the results and submit every job to the slurm cluster.
+To systematically evaluate the different methods in different settings, a snakemake pipeline is created, with the option to benchmark the results and submit every job to the slurm cluster. All related scripts for that are found in the directory [snakemake_pipeline/](snakemake_pipeline/).
 
-After activating the conda environment (created in `conda_env_R.yml`), the snakemake workflow `workflow.sm` can be run (given that a dataset is available at the defined locations).
+After activating the conda environment (created in [conda_env_R.yml](conda_env_R.yml)), the snakemake workflow [snakemake_pipeline/workflow.sm](snakemake_pipeline/workflow.sm) can be run (given that a dataset is available at the defined locations).
 
 ```
 conda activate r_env
@@ -103,4 +103,6 @@ nohup nice snakemake -s workflow.sm -u config/slurm.json --jobs=150 --local-core
     -p {cluster.partition}" \
     ${target} &> ${log} &
 ```
+
+Further analysis scripts for preprocessing and postanalysis, which are not directly included in the snakemake pipeline can be found in the directories [preprocessing_datasets/](preprocessing_datasets/) and [evalute_results/](evalute_results/).
 
