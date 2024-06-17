@@ -20,8 +20,11 @@ The following README contains:
 
 We evaluated six popular computational methods in their ability to detect CNVs in 15 scRNA-seq datasets, comprising cancer cell lines, primary cancer samples and one diploid PBMC dataset. We assessed the methods according to their ability to recover the ground truth CNVs, estimaed with (sc)WGS or WES, using a large set of performance metrics. Additionally, we explored whether they could correctly identify euploid cells, especially also in fully diploid samples, and subclonal structures in heterogeneous tumor samples. We assessed also the scalability of each method.
 
-![Project outline](pictures/figure1.png "Project outline")
-
+<figure>
+  <img src="pictures/figure1.png" alt="Project outline"/>
+  <figcaption><b>Figure 1.</b> Overview schematics of benchmarking workflow. Input data in blue, evaluation results in pink.</figcaption>
+</figure>
+</br></br>
 Assessed methods:
 
 * CaSpER: https://github.com/akdess/CaSpER
@@ -41,15 +44,24 @@ Assessed methods:
 
 For the CNV analysis of aneuploid samples, the evaluated methods showed a very variable performance which was in large part dataset dependent (Figure 2). We identified certain dataset characteristics that impacted the performance, e.g. total coverage, number of measured cells, and the relative frequency of gains and losses.
 
-![Performance of the different callers on aneuploid datasets](pictures/figure2.png "Figure 2. Performance of the different callers on aneuploid datasets")
-
+<figure>
+  <img src="pictures/figure2.png" alt="Performance of the different callers on aneuploid datasets" width="700"/>
+  <figcaption><b>Figure 2.</b> General performance evaluation on aneuploid datasets. <b>(A)</b> Performance comparison across all datasets. <b>(B)</b> Karyogram of the SNU601 dataset, every method score was scaled to have the same standard deviation. <b>(C)</b> Method comparison within the SNU601 dataset. <b>(D)</b> Overall mean runtime and memory consumption of each method across all datasets.</figcaption>
+</figure>
+</br></br>
 A strong difference between methods was instead observed in the analysis of the diploid cells (T-cells from a PBMC dataset), where the choice of the reference dataset had a great effect (Figure 3). When using T-cells from the same dataset as reference, we observed good performance values for all methods. However, when we used Monocytes or T-cells from another dataset for normalization, Numbat and Casper outperformed other methods, potentially due to the inclusion of allelic information for CNV classification. 
-
-![Performance of the different callers on euploid datasets](pictures/figure4.png "Figure 3. Performance of the different callers on euploid datasets")
-
+</br></br>
+<figure>
+  <img src="pictures/figure4.png" alt="Performance of the different callers on euploid datasets" width="700"/>
+  <figcaption><b>Figure 3.</b> <b>(A+B)</b> Karyograms of CNVs in CD4+ T cells when using other CD4+ T cells <b>(A)</b> or CD14+ Monocytes <b>(B)</b> as reference cells. <b>C.</b> Root mean squared error (RMSE) between CNV predictions of each method and diploid baseline as ground truth. The methods with lowest RMSE perform best. Panel title shows chosen reference cells.</figcaption>
+</figure>
+</br></br>
 Furthermore, the methods differ in other several other aspects (Figure 4). Numbat, SCEVAN and copyKat all include the option to automatically annotate diploid cells. The automatic performance showed a very high concordance to the manual annotations in nearly all cases, with Numbat and SCEVAN performing slightly better than copyKat. The classification of cells into different subclones worked well for all methods except CONCISmat and CaSpER. The runtime requirements for Numbat and Casper are longer, as they also estimate allele frequencies compared to the other methods, while especially CONICSmat and copyKat show both a fast runtime and little memory requirements. In the end, there is not one scRNA-seq method outperforming all other methods, but the user should choose the appropriate method for their specific tasks.
-
-![Performance summary](pictures/summary_plot.png "Figure 4. Performance summary")
+</br></br>
+<figure>
+  <img src="pictures/summary_plot.png" alt="Performance summary"/>
+  <figcaption><b>Figure 4.</b> Summary of the benchmarking results. Main categories: mean CNV prediction performance for cancer datasets and diploid datasets, tumor cell classification, sub clonal identification and required resources.</figcaption>
+</figure>
 
 ## Setup of the pipeline
 
