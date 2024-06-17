@@ -1,6 +1,6 @@
 # Benchmarking scRNA-seq copy number variant callers
 
-Katharina T. Schmid 1, Aikaterini Symeonidi 1,2, Dmytro Hlushchenko 1, Maria L. Richter 1, Maria Colomé-Tatché 1,2 (contact: maria.colome@bmc.med.lmu.de)
+Katharina T. Schmid<sup>1</sup>, Aikaterini Symeonidi<sup>1,2</sup>, Dmytro Hlushchenko<sup>1</sup>, Maria L. Richter<sup>1</sup>, Maria Colomé-Tatché<sup>1,2</sup> (contact: maria.colome@bmc.med.lmu.de)
 
 1 Biomedical Center (BMC), Physiological Chemistry, Faculty of Medicine, LMU Munich, Planegg-Martinsried, Germany
 
