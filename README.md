@@ -60,7 +60,7 @@ Furthermore, the methods differ in other several other aspects (Figure 4). Numba
 </br></br>
 <figure>
   <img src="pictures/summary_plot.png" alt="Performance summary"/>
-  <figcaption><b>Figure 4.</b> Summary of the benchmarking results. Main categories: mean CNV prediction performance for cancer datasets and diploid datasets, tumor cell classification, sub clonal identification and required resources.</figcaption>
+  <figcaption><b>Figure 4.</b> Summary of the benchmarking results. Main categories: mean CNV prediction performance for cancer datasets and diploid datasets, tumor cell classification, sub clonal identification and required resources. The dot size shows the rank of each method for the respective column, with 1 being the best performing method in the category. The dot color represents a normalized score, where the values of each metric are scaled from 0 to 1, in a way that 1 is always the best value. For this, the values of RMSE, runtime and memory consumption were inverted.</figcaption>
 </figure>
 
 ## Setup of the pipeline
