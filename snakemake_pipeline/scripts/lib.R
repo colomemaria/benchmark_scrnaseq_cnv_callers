@@ -280,6 +280,39 @@ read_casper<-function(input_file){
   return(casper_complete)
 }
 
+#Get a grange with cnv per clone from CaSpER
+read_casper_cnv<-function(input_casper_cellmatrix,input_gene_annot,
+                          clustering_casper){
+  
+  #Convert into a matrix
+  rna_matrix <-fread(input_casper_cellmatrix)
+  gene_names<-rna_matrix$V1
+  rna_matrix$V1<-NULL
+  rna_matrix<-as.matrix(rna_matrix)
+  rownames(rna_matrix)<-gene_names
+  
+  #Calculate pseudotime groups
+  clustering_casper$casper<-as.factor(clustering_casper$casper)
+  cnv_per_clone<-t(apply(rna_matrix,1,tapply,clustering_casper$casper,mean))+2
+  colnames(cnv_per_clone)<-paste0("casper_",colnames(cnv_per_clone))
+  
+  #Read gene annotation
+  annotation<-read.table(input_gene_annot,
+                         header=TRUE,stringsAsFactors = FALSE)
+  
+  #Filter for the genes not filtered out by CaSpER
+  annotation<-annotation[annotation$Gene %in% rownames(cnv_per_clone),]
+  
+  #Create a Grange from the gene annotations
+  annotation$Chr<-paste0("chr",annotation$Chr)
+  ann_gr <- makeGRangesFromDataFrame(annotation, 
+                                     keep.extra.columns = TRUE, seqnames.field="Chr")
+  #all(ann_gr$Gene == rownames(cnv_per_clone))
+  mcols(ann_gr)<-cnv_per_clone
+  
+  return(ann_gr)
+}
+
 read_casper_individual_cells<-function(input_casper_grange,input_casper_cells){
   
   #Get position information

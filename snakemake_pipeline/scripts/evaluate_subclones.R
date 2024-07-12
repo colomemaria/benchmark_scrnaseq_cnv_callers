@@ -40,19 +40,25 @@ input_annot_truth<-snakemake@input$annot_truth
 
 input_clusters_copykat<-snakemake@input$clusters_copykat
 input_matrix_copykat<-snakemake@input$matrix_copykat
+
 input_clones_numbat<-snakemake@input$clones_numbat
+
 input_infercnv_cnv<-snakemake@input$infercnv_cnv
 input_infercnv_gene_pos<-snakemake@input$infercnv_gene_pos
 input_clusters_infercnv<-snakemake@input$clusters_infercnv
+
 input_clones_scevan<-snakemake@input$clones_scevan
 input_scevan_subclones<-snakemake@input$scevan_subclones
+
 input_l_CONICSmat<-snakemake@input$l_CONICSmat
 input_lr_CONICSmat<-snakemake@input$lr_CONICSmat
 input_genes_CONICSmat<-snakemake@input$genes_CONICSmat
 input_CONICSmat_chrom_pos<-snakemake@input$CONICSmat_chrom_pos
 input_CONICSmat_cnv<-snakemake@input$CONICSmat_cnv
-input_clusters_casper<-snakemake@input$clusters_casper
-input_clusters_pbulk_casper<-snakemake@input$clusters_pbulk_casper
+
+input_casper_hclust<-snakemake@input$casper_hclust
+input_casper_cellmatrix<-snakemake@input$casper_cellmatrix
+input_casper_gene_annot<-snakemake@input$casper_gene_annot
 
 param_dataset<-snakemake@params$dataset
 
@@ -131,8 +137,11 @@ clusters_conicsmat<-data.frame(cell=names(hi),
                                conicsmat=hi)
 all_clusters<-merge(all_clusters,clusters_conicsmat,by="cell",all=TRUE)
 
-#Add casper results
-clustering_casper<-fread(input_clusters_casper)
+# Get CaSpER clones
+clusters_casper<-readRDS(input_casper_hclust)
+groups_casper<-cutree(clusters_casper,k=param_splitted_clusters)
+clustering_casper<-data.frame(cell=names(groups_casper),
+                              casper=groups_casper)
 all_clusters<-merge(all_clusters,clustering_casper,by="cell",all=TRUE)
 
 #SCEVAN (need to run specific mode to find subclusters)
@@ -299,8 +308,8 @@ colnames(mcols(numbat_results))<-gsub("cnv_","",colnames(mcols(numbat_results)))
 combined_clones<-combine_range_objects_allcols(combined_clones,numbat_results)
 
 print("Load Casper data")
-casper_results <- fread(input_clusters_pbulk_casper)
-casper_results <- makeGRangesFromDataFrame(casper_results,keep.extra.columns = TRUE)
+casper_results <- read_casper_cnv(input_casper_cellmatrix,input_casper_gene_annot,
+                                  clustering_casper)
 combined_clones<-combine_range_objects_allcols(combined_clones,casper_results)
 
 #Save the combined result data frame for later processing

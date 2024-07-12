@@ -124,49 +124,6 @@ rule run_SCEVAN_predict_cancer_cells:
 
 
 # ------------------------------------------------------------------------------
-# Run HoneyBadger (the expression model)
-# Remark: due to specification of our cluster, the first rule is run locally
-#         (as it requires internet access not possible otherwise)
-# To get hg19 annotations, set params$biomart = "https://grch37.ensembl.org"
-# ------------------------------------------------------------------------------
-
-rule run_honeybadger_preprocessing:
-	input:
-		matrix = "data/input_{dataset}/count_matrix.txt",
-		annot = "data/input_{dataset}/sample_annotation.txt",
-		ref_groups = "data/input_{dataset}/ref_groups.txt"
-	output:
-		hb_object = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_setup.RDS"
-	log:
-		"logs/honeybadger_expr_part1_{dataset}.log"
-	benchmark:
-		"benchmarks/honeybadger_expr_part1_{dataset}_benchmark.txt"
-	params:
-		biomart = "https://www.ensembl.org"
-	script:
-		"scripts/honeybadger_setup.R"
-
-rule run_honeybadger_expr:
-	input:
-		hb_object = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_setup.RDS"
-	output:
-		cnv_file = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_cnvs.txt",
-		plot_expr = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_expr_plot.pdf",
-		plot_cnv_tree ="results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_cnv_tree_plot.pdf",
-		hb_obj_final = "results/output_{dataset}/honeybadger_expr/{dataset}_honeybadger_object_final.RDS"
-	log:
-		"logs/honeybadger_expr_part2_{dataset}.log"
-	benchmark:
-		"benchmarks/honeybadger_expr_part2_{dataset}_benchmark.txt"
-	threads: 1
-	resources:
-		mem_mb = 32000
-	params:
-		time = "48:00:00"
-	script:
-		"scripts/honeybadger.R"
-
-# ------------------------------------------------------------------------------
 # Run Casper (3 steps: calculate BAF, get gene annotations and run the methods)
 # Remark: due to specification of our cluster, the second rule is run locally
 #         (as it requires internet access not possible otherwise)
@@ -310,7 +267,8 @@ rule run_numbat:
 		ref_groups = "data/input_{dataset}/ref_groups.txt",
 		df_allele = "results/output_{dataset}/numbat/{dataset}_allele_counts.tsv.gz"
 	output:
-		cnv_expr = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz"
+		cnv_expr = "results/output_{dataset}/numbat/gexp_roll_wide.tsv.gz",
+		clones_numbat =  "results/output_{dataset}/numbat/clone_post_2.tsv"
 	log:
 		"logs/numbat_{dataset}.log"
 	benchmark:
@@ -518,18 +476,6 @@ rule all_cnv_methods_BCC0507:
 
 
 # ------------------------------------------------------------------------------
-# Running all methods on the RCC86 dataset
-# ------------------------------------------------------------------------------
-
-rule all_cnv_methods_RCC86:		
-	input:
-		"results/output_RCC86/infercnv/infercnv.observations.txt",
-		"results/output_RCC86/copykat/RCC86_copykat_CNA_results.txt",
-		"results/output_RCC86/scevan/output/RCC86_subclone1_CN.seg",
-		"results/output_RCC86/CONICSmat/cnv_types.tsv"
-
-
-# ------------------------------------------------------------------------------
 # Running all methods on the PBMC dataset - check performance on a diploid sample
 # ------------------------------------------------------------------------------
 
@@ -713,18 +659,6 @@ rule all_evaluations_SNU601:
 		"results/output_SNU601/evaluation/SNU601_evaluation_per_cell_results.tsv",
 		"results/output_SNU601/casper_strict/SNU601_casper_cell_matrix.tsv" 
 
-rule all_evaluations_SNU601_subsampled:
-	input:
-		"results/output_SNU601_sample20/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_SNU601_sample40/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_SNU601_sample60/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_SNU601_sample80/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_SNU601_sample20/evaluation/evaluation_cnv_prediction_permethod.tsv",
-		"results/output_SNU601_sample40/evaluation/evaluation_cnv_prediction_permethod.tsv",
-		"results/output_SNU601_sample60/evaluation/evaluation_cnv_prediction_permethod.tsv",
-		"results/output_SNU601_sample80/evaluation/evaluation_cnv_prediction_permethod.tsv",
-		"results/output_SNU601/evaluation/evaluation_cnv_prediction_permethod.tsv"
 
 # ------------------------------------------------------------------------------
 # Evaluate different SN601 CNV predictions with different reference sets
@@ -958,20 +892,9 @@ rule all_evaluations_MCF7:
 		"results/output_MCF7/evaluation/evaluation_cnv_prediction_auc.pdf",
 		"results/output_MCF7/evaluation/MCF7_resources_required.png"
 
-# ------------------------------------------------------------------------------
-# Evaluate different MCF7 CNV predictions with different reference sets
-# ------------------------------------------------------------------------------
-
-rule all_evaluations_MCF7_diffrefs:
-	input:
-		"results/output_MCF7_endothelial/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_MCF7_immune/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_MCF7_stromal/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_MCF7_SNU601/evaluation/evaluation_cnv_prediction_auc.pdf",
-		"results/output_MCF7_gastric/evaluation/evaluation_cnv_prediction_auc.pdf"
 
 # ------------------------------------------------------------------------------
-# Rule for evaluation when using WES results (necessary for MM)
+# Rule for evaluation when using WES results (necessary for MM, BCC06 & BCC06post)
 # ------------------------------------------------------------------------------
 
 rule evaluate_cnv_prediction_wes:
@@ -1228,17 +1151,6 @@ rule all_evaluations_BCC06post:
 
 
 # ------------------------------------------------------------------------------
-# Evaluate BCC06 CNV predictions with different reference sets
-# ------------------------------------------------------------------------------
-
-rule all_evaluations_BCC06_diffrefs:
-	input:
-		"results/output_BCC06_immune/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
-		"results/output_BCC06_TS/evaluation/evaluation_cnv_prediction_auc_wes.pdf",
-		"results/output_BCC06_SNU601/evaluation/evaluation_cnv_prediction_auc_wes.pdf"
-
-
-# ------------------------------------------------------------------------------
 # Run standard analyses of all cancer datasets together
 # ------------------------------------------------------------------------------
 
@@ -1344,15 +1256,16 @@ rule evaluate_subclones:
 		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
 		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
 		clusters_infercnv = "results/output_{dataset}/infercnv/run.final.infercnv_obj",
-		clones_scevan = "results/output_{dataset}/scevan_find_clones/output/{dataset}_scevan_prediction.txt",
-		scevan_subclones = "results/output_{dataset}/scevan_find_clones/output/{dataset}_subclone1_CN.seg",
+		clones_scevan = "results/output_{dataset}/scevan/output/{dataset}_scevan_prediction.txt",
+		scevan_subclones = "results/output_{dataset}/scevan/output/{dataset}_subclone1_CN.seg",
 		l_CONICSmat = "results/output_{dataset}/CONICSmat/cnv_posterior_probs.tsv",
 		lr_CONICSmat = "results/output_{dataset}/CONICSmat/CONICSmat_CNV_BIC_LR.txt",
 		genes_CONICSmat="results/output_{dataset}/CONICSmat/gene_annotation_conicsmat_{dataset}.tsv",
 		CONICSmat_chrom_pos = "data/annotations/chromosome_arm_positions_grch38.txt",
 		CONICSmat_cnv = "results/output_{dataset}/CONICSmat/cnv_types.tsv",
-		clusters_casper = "results/output_{dataset}/casper/{dataset}_casper_clusters.tsv",
-		clusters_pbulk_casper = "results/output_{dataset}/casper/{dataset}_casper_pseudobulk_clones.tsv"
+		casper_hclust = "results/output_{dataset}/casper/{dataset}_casper_hclust.RDS",
+		casper_cellmatrix = "results/output_{dataset}/casper/{dataset}_casper_cell_matrix.tsv",
+		casper_gene_annot = "results/output_{dataset}/casper/gene_annotation_casper_{dataset}.tsv"
 	output:
 		merged_clusters = "results/output_{dataset}/evaluation/allclusters_combined.tsv",
 		merged_results = "results/output_{dataset}/evaluation/allclones_combined.tsv",
@@ -1376,96 +1289,4 @@ rule all_evaluate_subclones_BCC:
 	input:
 		"results/output_BCC/evaluation/evaluation_clustering.pdf"
 
-# ------------------------------------------------------------------------------
-# In-depth evaluation of InferCNV results 
-# (exploring potential reasons for false classifications)
-# ------------------------------------------------------------------------------
 
-rule evaluate_inferCNV_detailed:
-	input:
-		matrix = "data/input_{dataset}/count_matrix.txt",
-		annot = "data/input_{dataset}/sample_annotation.txt",
-		ref_groups = "data/input_{dataset}/ref_groups.txt",
-		scwgs_truth = "data/{dataset}_scWGS_results/wgs_results_aneufinder_pseudobulk.csv",
-		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
-		infercnv_gene_pos = "data/annotations/gencode_v19_gene_pos.txt"
-	output:
-		gene_dist = "results/output_{dataset}/evaluation/evaluation_InferCNV/gene_dist_bins.png",
-		plot_count_dist = "results/output_{dataset}/evaluation/evaluation_InferCNV/count_dist.png",
-		plot_count_norm = "results/output_{dataset}/evaluation/evaluation_InferCNV/count_dist_norm.png",
-		overview_plot = "results/output_{dataset}/evaluation/evaluation_InferCNV/heatmap_factors.pdf",
-		boxplot_loss = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_expr_dist_loss.png",
-		boxplot_loss_lfc = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_lfc_loss.png",
-		boxplot_gain = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_expr_dist_gain.png",
-		boxplot_gain_lfc = "results/output_{dataset}/evaluation/evaluation_InferCNV/boxplot_lfc_gain.png"
-	log:
-		"logs/evaluate_inferCNV_detailed_{dataset}.log"
-	threads: 1
-	resources:
-		mem_mb = 24000
-	params:
-		time = "1:00:00"
-	script:
-		"scripts/evaluation_in_depth_InferCNV.R"
-
-rule evaluate_detailed_SNU601:
-	input:
-		"results/output_SNU601/evaluation/evaluation_InferCNV/heatmap_factors.pdf"
-
-
-# ------------------------------------------------------------------------------
-# Running all methods on the COLO320 dataset - using most diploid cells as reference
-# (according to a script from Paulina)
-# ------------------------------------------------------------------------------
-
-rule all_cnv_methods_COLO320woref:		
-	input:
-		"results/output_COLO320woref/infercnv/infercnv.observations.txt",
-		"results/output_COLO320woref/copykat/COLO320woref_copykat_CNA_results.txt",
-		"results/output_COLO320woref/scevan/output/COLO320woref_Clonal_CN.seg"
-
-
-# ------------------------------------------------------------------------------
-# Evaluate Paulina's results without the necessity to run all methods
-# ------------------------------------------------------------------------------
-
-rule evaluate_cnv_prediction_COLO320woref:
-	input:
-		annot = "data/input_{dataset}/sample_annotation.txt",
-		ref_groups = "data/input_{dataset}/ref_groups.txt",
-		genomic_ground_truth = "data/COLO320_WGS/COLO320_HSR_WGS.aln.sort.rmdup.call.cns",
-		infercnv_cnv = "results/output_{dataset}/infercnv/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
-		infercnv_expr = "results/output_{dataset}/infercnv/infercnv.observations.txt",
-		infercnv_gene_pos = "data/annotations/hg38_gencode_v27.txt",
-		copykat = "results/output_{dataset}/copykat/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt",
-		scevan = "results/output_{dataset}/scevan/output/{dataset}_CNAmtx.RData",
-		scevan_gene_pos = "results/output_{dataset}/scevan/output/{dataset}_count_mtx_annot.RData",
-		scevan_vega = "results/output_{dataset}/scevan/output/ {dataset}onlytumor vega_output",
-	output:
-		merged_results = "results/output_{dataset}/evaluation/outputs_allmethods_combined_woref.tsv",
-		text_filter = "results/output_{dataset}/evaluation/filtering_results_woref.tsv",
-		plot_filter = "results/output_{dataset}/evaluation/filtering_results_woref.pdf",
-		plot_heatmap = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_woref.pdf",
-		text_scaling = "results/output_{dataset}/evaluation/scaling_factors_woref.tsv",
-		text_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_woref.tsv",
-		plot_corr = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_corr_woref.pdf",
-		text_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_woref.txt",
-		plot_auc = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_auc_woref.pdf",
-		text_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_woref.txt",
-		plot_f1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_f1_woref.pdf",
-		plot_heatmap_binf1 = "results/output_{dataset}/evaluation/evaluation_cnv_prediction_heatmap_binarized_f1_woref.pdf"
-	log:
-		"logs/evaluate_prediction_woref_{dataset}.log"
-	threads: 1
-	resources:
-		mem_mb = 24000
-	params:
-		time = "24:00:00",
-		genomic_format = "CNVkit"
-	script:
-		"scripts/evaluate_results.R"
-
-
-rule all_evaluate_COLO320woref:
-	input:
-		merged_results = "results/output_COLO320woref/evaluation/outputs_allmethods_combined_woref.tsv"

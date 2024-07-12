@@ -8,8 +8,6 @@ library(data.table)
 library(Matrix)
 library(ggplot2)
 
-setwd("/Users/kschmid/Documents/CNV_RNAseq_benchmark")
-
 # ------------------------------------------------------------------------------
 # Pre-check: how much does the external count matrix differ dependent on the
 # cellranger version (and genome version)
