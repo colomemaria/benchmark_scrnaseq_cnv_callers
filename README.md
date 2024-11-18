@@ -25,19 +25,19 @@ We evaluated six popular computational methods in their ability to detect CNVs i
   <figcaption><b>Figure 1.</b> Overview schematics of benchmarking workflow. Input data in blue, evaluation results in pink.</figcaption>
 </figure>
 </br></br>
-Assessed methods:
+Assessed methods (and tested versions):
 
-* CaSpER: https://github.com/akdess/CaSpER
+* CaSpER (v0.2.0): https://github.com/akdess/CaSpER
 
-* CONICSmat: https://github.com/diazlab/CONICS
+* CONICSmat (v0.0.0.1): https://github.com/diazlab/CONICS
 
-* copyKat: https://github.com/navinlabcode/copykat 
+* copyKat (v1.1.0): https://github.com/navinlabcode/copykat 
 
-* InferCNV: https://github.com/broadinstitute/infercnv
+* InferCNV (v1.10.0): https://github.com/broadinstitute/infercnv
 
-* Numbat: https://github.com/kharchenkolab/numbat/
+* Numbat (v1.2.2): https://github.com/kharchenkolab/numbat/
 
-* SCEVAN: https://github.com/AntonioDeFalco/SCEVAN 
+* SCEVAN (v1.0.1): https://github.com/AntonioDeFalco/SCEVAN 
 
 
 ## Main results
