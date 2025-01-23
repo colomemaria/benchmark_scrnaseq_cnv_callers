@@ -78,7 +78,6 @@ However, most of the CNV callers are only available on github. They need to be i
 
 ```
 library(devtools)
-install_github("JEFworks/HoneyBADGER")
 install_github("akdess/CaSpER")
 install_github("navinlabcode/copykat")
 
