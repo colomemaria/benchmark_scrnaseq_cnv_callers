@@ -35,7 +35,7 @@ Assessed methods (and tested versions):
 
 * InferCNV (v1.10.0): https://github.com/broadinstitute/infercnv
 
-* Numbat (v1.2.2): https://github.com/kharchenkolab/numbat/
+* Numbat (v1.4.0): https://github.com/kharchenkolab/numbat/
 
 * SCEVAN (v1.0.1): https://github.com/AntonioDeFalco/SCEVAN 
 
