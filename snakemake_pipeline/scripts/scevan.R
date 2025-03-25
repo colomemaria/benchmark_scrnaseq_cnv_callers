@@ -26,6 +26,13 @@ input_ref_groups<-snakemake@input$ref_groups
 #Boolean option to find subclones
 input_clones<-as.logical(snakemake@params$find_clones)
 
+#Set genome version (human or mouse)
+input_organism<-snakemake@params$organism
+if(is.null(input_organism)){
+  input_organism<-"human"
+} 
+print(paste("Running SCEVAN for the following organism:",input_organism))
+
 output_file<-snakemake@output$cnv_file
 output_pred<-snakemake@output$pred_file
 
@@ -81,7 +88,8 @@ scevan_output<-SCEVAN::pipelineCNA(data_matrix,
                                    par_cores = 1,
                                    norm_cell=ref_cells,
                                    SUBCLONES = input_clones, 
-                                   plotTree = FALSE)
+                                   plotTree = FALSE,
+                                   organism = input_organism)
 
 #Save cell classification as it is not saved automatically in the directory
 #Remark: output_pred file will be saved in the SCEVAN output directory

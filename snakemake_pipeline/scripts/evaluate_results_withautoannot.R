@@ -1,6 +1,7 @@
 # ------------------------------------------------------------------------------
 # Evaluate the results of the different CNV callers compared to a ground truth
-# dataset (typically WGS)
+# dataset - specific version of the script where the methods are compared that
+# have the options to automatically identify the reference vs tumor cells
 # ------------------------------------------------------------------------------
 
 log <- file(snakemake@log[[1]], open="wt")
@@ -18,10 +19,8 @@ library(reshape2)
 library(ggplot2)
 library(ggpubr)
 library(ROCR)
-library(pROC)
 library(viridis)
 library(numbat)
-library(crfsuite)
 
 theme_set(theme_bw())
 
@@ -32,31 +31,24 @@ source("scripts/lib.R")
 print("Get input parameters from snakemake")
 # ------------------------------------------------------------------------------
 
-#Input files
 input_annot<-snakemake@input$annot
 input_ref_groups<-snakemake@input$ref_groups
-input_wgs<-snakemake@input$genomic_ground_truth
+input_genomic<-snakemake@input$genomic
 
-input_infercnv_cnv<-snakemake@input$infercnv_cnv
-input_infercnv_expr<-snakemake@input$infercnv_expr
-input_infercnv_gene_pos<-snakemake@input$infercnv_gene_pos
+input_copykat_wref<-snakemake@input$copykat_wref
+input_copykat_woref<-snakemake@input$copykat_woref
 
-input_casper<-snakemake@input$casper
-  
-input_copykat<-snakemake@input$copykat
+input_scevan_clone1_wref<-snakemake@input$scevan_clone1_wref
+input_scevan_annot_wref<-snakemake@input$scevan_annot_wref
+input_scevan_clone1_woref<-snakemake@input$scevan_clone1_woref
+input_scevan_annot_woref<-snakemake@input$scevan_annot_woref
 
-input_scevan_expr<-snakemake@input$scevan
-input_scevan_gene_pos<-snakemake@input$scevan_gene_pos
-input_scevan_clone1<-snakemake@input$scevan_clone1
-input_scevan_annot<-snakemake@input$scevan_annot
-  
-input_hb_obj<-snakemake@input$hb_obj
+input_numbat_obj_wref<-dirname(snakemake@input$numbat_obj_wref)
+input_numbat_obj_woref<-dirname(snakemake@input$numbat_obj_woref)
 
-input_numbat_obj<-snakemake@input$numbat_obj
-
-input_CONICSmat_filtered_dims<-snakemake@input$CONICSmat_filtered_dims
 input_CONICSmat_chrom_pos<-snakemake@input$CONICSmat_chr_pos
-input_CONICSmat_cnv<-snakemake@input$CONICSmat_cnv
+input_CONICSmat_cnv_wref<-snakemake@input$CONICSmat_cnv_wref
+input_CONICSmat_cnv_woref<-snakemake@input$CONICSmat_cnv_woref  
 
 #Parameter how to interpret the WGS/WES data (default set to WGS)
 param_genomic_format<-snakemake@params$genomic_format
@@ -70,12 +62,10 @@ if(is.null(param_genomic_name)){
   param_genomic_name<-"WGS"
 }
 
-#Output files
-output_merged_results<-snakemake@output$merged_results
-output_text_filter<-snakemake@output$text_filter
-output_plot_filter<-snakemake@output$plot_filter
+
+output_merged_results<-snakemake@output$merged_results 
+
 output_plot_heatmap<-snakemake@output$plot_heatmap
-output_text_scaling<-snakemake@output$text_scaling
 output_text_corr<-snakemake@output$text_corr
 output_plot_corr<-snakemake@output$plot_corr
 output_text_auc<-snakemake@output$text_auc
@@ -86,189 +76,93 @@ output_plot_heatmap_binf1<-snakemake@output$plot_heatmap_binf1
 
 # ------------------------------------------------------------------------------
 print("Load the results of the different methods, calculate a pseudbulk version
-      for each and combine them in one GRange object based on WGS bins")
+      for each and combine them in one GRange object based on WES bins")
 # ------------------------------------------------------------------------------
-
-# Save the number of evaluated genes per method
-num_filtered_res<-NULL
 
 print("Load genomic data (scWGS/WGS/WES)")
 if(param_genomic_format == "WGS"){
-  wgs_results<-read_wgs_results(input_wgs)
+  wgs_results<-read_wgs_results(input_genomic)
   
   print(paste("Reading (sc)WGS results with in total",
               length(wgs_results),"bins!"))
-} else if (param_genomic_format == "CNVkit"){
-  wgs_results<-read_results_cnvkit_segs(input_wgs)
-    
-  print(paste("Reading CNVkit results with in total",
-              length(wgs_results),"bins!")) 
-} else if (param_genomic_format == "GATK"){
-  wgs_results<-read_wes_results_gatk(input_wgs)
 
-  print(paste("Reading GATK results with in total",
+  } else if (param_genomic_format == "WES"){
+  wgs_results<-read_wes_results_gatk(input_genomic)
+  
+  print(paste("Reading WES results with in total",
               length(wgs_results),"bins!"))
 } else {
   stop(paste("Format of the genomic data is unknown!",
-             "Need to be WGS, CNVkit or GATK, not",param_genomic_format))
+             "Need to be WGS or WES, not",param_genomic_format))
 }
 
-print("Load inferCNV data (pseudobulk CNVs)")
-infercnv_results<-read_infercnv_6state_model(input_infercnv_cnv,
-                                             input_infercnv_gene_pos)
-
-num_filtered_res<-rbind(num_filtered_res,
-                        data.frame(method="inferCNV",
-                                  annotated_genes=length(infercnv_results[[1]]),
-                                  annotated_cells=infercnv_results[[2]]))
-
-combined_range<-combine_range_objects(wgs_results,infercnv_results[[1]],
-                                      method_colname="infercnv_cnv")
-
-print("Load inferCNV data (normalized expression)")
-infercnv_results<-read_infercnv_expr(input_infercnv_expr,
-                                     input_infercnv_gene_pos)
-
-combined_range<-combine_range_objects(combined_range,infercnv_results[[1]],
-                                      method_colname="infercnv_expr")
-
-#Check if Casper output files are provided
-if(! is.null(input_casper)){
+print("Load copykat data - with ref")
+copykat_results<-read_copykat(input_copykat_wref,input_annot,input_ref_groups)
+colnames(mcols(copykat_results[[1]]))<-c("copykat_wref")
   
-  print("Load casper results (filtered segments, aggregated per gene)")
-  casper_results<-read_casper(input_casper)
-  
-  #Skip evaluation of Numbat CNV if no CNVs are identified at all
-  if(! is.null(casper_results)){
+combined_range<-combine_range_objects(wgs_results,copykat_results[[1]],
+                                      method_colname="copykat_wref")
 
-    num_filtered_res<-rbind(num_filtered_res,
-                            data.frame(method="CaSpER",
-                                       annotated_genes=length(casper_results),
-                                       annotated_cells=NA))
-    
-    combined_range<-combine_range_objects(combined_range,casper_results,
-                                          method_colname="casper")
-  } else {
-    print("Skipping casper (no CNVs found).")
-  }
-  
-} else {
-  print("Skipping casper (no output file provided).")
-}
-
-print("Load copykat data (normalized expression)")
-copykat_results<-read_copykat(input_copykat,input_annot,input_ref_groups)
-
-num_filtered_res<-rbind(num_filtered_res,
-                        data.frame(method="copyKat",
-                                   annotated_genes=length(copykat_results[[1]]),
-                                   annotated_cells=copykat_results[[2]]))
+print("Load copykat data - without ref")
+copykat_results<-read_copykat(input_copykat_woref,input_annot,input_ref_groups)
+colnames(mcols(copykat_results[[1]]))<-c("copykat_woref")
 
 combined_range<-combine_range_objects(combined_range,copykat_results[[1]],
-                                      method_colname="copykat")
+                                      method_colname="copykat_woref")
 
-print("Load SCEVAN data (normalized expression)")
-scevan_results<-read_scevan(input_scevan_expr,input_scevan_gene_pos,
-                            input_annot,input_ref_groups)
 
-num_filtered_res<-rbind(num_filtered_res,
-                        data.frame(method="SCEVAN",
-                                   annotated_genes=length(scevan_results[[1]]),
-                                   annotated_cells=scevan_results[[2]]))
-
-combined_range<-combine_range_objects(combined_range,scevan_results[[1]],
-                                      method_colname="scevan")
-
-print("Load SCEVAN data (CNV output)")
+print("Load SCEVAN data - with ref")
 binned_genome<-combined_range
 elementMetadata(binned_genome)<-NULL
-scevan_results<-read_scevan_cn_status(input_scevan_clone1, input_scevan_annot,
-                                      input_annot, input_ref_groups,
+scevan_results<-read_scevan_cn_status(input_scevan_clone1_wref, input_scevan_annot_wref,
+                                      input_annot,input_ref_groups,
                                       binned_genome)
-
+colnames(mcols(scevan_results))<-c("scevan_cnv_wref")
 combined_range<-combine_range_objects(combined_range,scevan_results,
-                                      method_colname="scevan_cnv")
+                                      method_colname="scevan_cnv_wref")
 
-#Check if Numbat output files are provided
-if(! is.null(input_numbat_obj)){
-  
-  #Get the directory name
-  input_numbat_obj<-dirname(input_numbat_obj)
-  
-  print("Load Numbat results (expr)")
-  
-  numbat_results <- read_numbat_expr(input_numbat_obj)
-  
-  num_filtered_res<-rbind(num_filtered_res,
-                          data.frame(method="Numbat",
-                                     annotated_genes=length(numbat_results[[1]]),
-                                     annotated_cells=numbat_results[[2]]))
-  
-  combined_range<-combine_range_objects(combined_range, numbat_results[[1]],
-                                        method_colname="numbat")
-  
-  print("Load Numbat results (CNVs)")
-  numbat_results <- read_numbat_cnv(input_numbat_obj)
-  
-  #Skip evaluation of Numbat CNV if no CNVs are identified at all
-  if(! is.null(numbat_results)){
-    combined_range<-combine_range_objects(combined_range, numbat_results,
-                                          method_colname="numbat_cnv")
-  } else {
-    print("Skipping casper (no CNVs found).")
-  }
+print("Load SCEVAN data - without ref")
+binned_genome<-combined_range
+elementMetadata(binned_genome)<-NULL
+scevan_results<-read_scevan_cn_status(input_scevan_clone1_woref, input_scevan_annot_woref,
+                                      input_annot,input_ref_groups,
+                                      binned_genome)
+colnames(mcols(scevan_results))<-c("scevan_cnv_woref")
+combined_range<-combine_range_objects(combined_range,scevan_results,
+                                      method_colname="scevan_cnv_woref")
 
-} else {
-  print("Skipping Numbat (no output file provided).")  
-}
 
-#Check if CONICSmat output files are provided
-if(! is.null(input_CONICSmat_cnv)){
-  print("Load CONICSmat results")
-  CONICSmat_results <- read_CONICSmat(input_CONICSmat_chrom_pos, input_CONICSmat_cnv,
-                                      input_annot, input_ref_groups)
-    
-  combined_range<-combine_range_objects(combined_range, CONICSmat_results,
-                                        method_colname="CONICSmat")
-  
-  tmp<-fread(input_CONICSmat_filtered_dims)
-  num_filtered_res<-rbind(num_filtered_res,
-                          data.frame(method="CONICSmat",
-                                     annotated_genes=tmp$ngenes[1],
-                                     annotated_cells=tmp$ncells[1]))
-  
-} else {
-  print("Skipping CONICSmat (no output file provided).")  
-}
+print("Load Numbat results - with ref")
+numbat_results <- read_numbat_cnv(input_numbat_obj_wref)
+colnames(mcols(numbat_results))<-c("numbat_wref")
+combined_range<-combine_range_objects(combined_range, numbat_results,
+                                      method_colname="numbat_wref")
 
+print("Load Numbat results - without ref")
+numbat_results <- read_numbat_cnv(input_numbat_obj_woref)
+colnames(mcols(numbat_results))<-c("numbat_woref")
+combined_range<-combine_range_objects(combined_range, numbat_results,
+                                      method_colname="numbat_woref")
+
+print("Load CONICSmat results - with ref")
+CONICSmat_results <- read_CONICSmat(input_CONICSmat_chrom_pos, 
+                                    input_CONICSmat_cnv_wref,
+                                    input_annot, input_ref_groups)
+colnames(mcols(CONICSmat_results))<-c("CONICSmat_wref")  
+combined_range<-combine_range_objects(combined_range, CONICSmat_results,
+                                      method_colname="CONICSmat_wref")
+
+print("Load CONICSmat results - without ref")
+CONICSmat_results <- read_CONICSmat(input_CONICSmat_chrom_pos, 
+                                    input_CONICSmat_cnv_woref,
+                                    input_annot, input_ref_groups)
+colnames(mcols(CONICSmat_results))<-c("CONICSmat_woref")  
+combined_range<-combine_range_objects(combined_range, CONICSmat_results,
+                                      method_colname="CONICSmat_woref")
 
 #Save the combined result data frame for later processing
 write.table(combined_range,file=output_merged_results,
             quote = FALSE,row.names=FALSE,sep="\t")
-
-# ------------------------------------------------------------------------------
-print("Create filtering plot")
-# ------------------------------------------------------------------------------
-
-#Save the filtering results
-write.table(num_filtered_res,file=output_text_filter,sep="\t",quote=FALSE,
-            row.names=FALSE)
-
-#Create plots of filtered cells and genes (or rather: how many are left)
-g.1<-ggplot(num_filtered_res,aes(x=method,fill=method,y=annotated_cells))+
-  geom_bar(stat="identity")+
-  theme(legend.position="none",
-        axis.text.x = element_text(angle = 45,vjust=1,hjust=1))+
-  ylab("Analysed cells")+xlab("CNV Method")
-
-g.2<-ggplot(num_filtered_res,aes(x=method,fill=method,y=annotated_genes))+
-  geom_bar(stat="identity")+
-  theme(legend.position="none",
-        axis.text.x = element_text(angle = 45,vjust=1,hjust=1))+
-  ylab("Annotated genes")+xlab("CNV Method")
-
-g<-ggarrange(g.1,g.2,ncol=2)
-ggsave(g,file=output_plot_filter,width=8,height=4)
 
 # ------------------------------------------------------------------------------
 print("Combined line plot / heatmap")
@@ -276,14 +170,14 @@ print("Combined line plot / heatmap")
 
 #Vector for renaming methods (official published names) and specifying
 #the order in the plot
-method_names<-setNames(c(param_genomic_name,"HoneyBADGER (CNV)","HoneyBADGER (Expr)",
-                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
-                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
-                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
-                       c("wgs_mean","hb_cnv","honeybadger",
-                         "infercnv_cnv","infercnv_expr","casper",
-                         "copykat","scevan_cnv","scevan",
-                         "numbat","numbat_cnv", "CONICSmat"))
+method_names<-setNames(c(param_genomic_format,"copyKat","copyKat (wo ref)",
+                         "SCEVAN","SCEVAN (wo ref)",
+                         "Numbat", "Numbat (wo ref)", 
+                         "CONICSmat", "CONICSmat (wo ref)"),
+                       c("wgs_mean","copykat_wref","copykat_woref",
+                         "scevan_cnv_wref","scevan_cnv_woref",
+                         "numbat_wref","numbat_woref", 
+                         "CONICSmat_wref","CONICSmat_woref"))
 
 #Get results
 combined_methods<-elementMetadata(combined_range)
@@ -306,21 +200,11 @@ chr_boundries<-combined_methods%>%
             mean_chr=mean(counted_pos))
 
 #Scale every dataset to have diploid values at 0 and a standard deviation of 1
-scaling_factor<-NULL
 scaled_methods<-combined_methods
 for(method in names(method_names)){
   scaled_methods[,method]<-(scaled_methods[,method]-2) / 
     sd(scaled_methods[,method])
-  
-  #Save the standard deviation of each method to document the chosen normalization factor
-  scaling_factor<-rbind(scaling_factor,
-                        data.frame(method,
-                                   sd=sd(combined_methods[,method]),
-                                   mean=mean(combined_methods[,method]-2)))
 }
-
-write.table(scaling_factor,file=output_text_scaling,sep="\t",quote=FALSE,
-            row.names=FALSE)
 
 plot_data<-reshape2::melt(scaled_methods,
                           id.vars=c("chr","start_position","counted_pos"))
@@ -368,7 +252,7 @@ g.2<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
         text=element_text(size=21))
 #g<-ggarrange(g.1,g.2,ncol=1,align="v",heights=c(0.3,0.7))
 ggsave(g.2, file=output_plot_heatmap,
-       width=20,height=8)
+       width=20,height=10)
 
 # ------------------------------------------------------------------------------
 print("Correlation calculation and plot")
@@ -544,7 +428,6 @@ g<-ggplot(plot_bins_res,aes(x=method,y=value,fill=method))+
 
 ggsave(g, file=output_plot_f1,
        width=10,height=6)
-
 
 # ------------------------------------------------------------------------------
 print("Plot karyogram with F1 score optimal thresholds")

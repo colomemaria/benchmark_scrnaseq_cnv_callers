@@ -23,6 +23,13 @@ input_gene_pos_df <- snakemake@input$gene_pos_df
 input_annotations <- snakemake@input$annot
 input_ref_groups <- snakemake@input$ref_groups
 
+input_species<-snakemake@params$species
+if(is.null(input_species)){
+  input_species<-"human"
+} 
+print(paste("Running CONICSmat for the following organism:",input_species))
+
+
 output_filtering_dims <- snakemake@output$filtering_dims
 out_cnv_types <- snakemake@output$cnv_types
 out_tumor_pred <- snakemake@output$tumor_pred
@@ -55,7 +62,14 @@ expr_df<-log2(expr_df/10+1)
 expr_df[which(is.na(expr_df))] <- 0 #convert NA values to 0's
 
 #filter uninformative genes (expressed in few cells)
-expr_df <- filterMatrix(expr_df,gene_pos[,"hgnc_symbol"],minCells=5)
+if(input_species=="human"){
+  expr_df <- filterMatrix(expr_df,gene_pos[,"hgnc_symbol"],minCells=5)
+} else if(input_species=="mouse"){
+  expr_df <- filterMatrix(expr_df,gene_pos[,"mgi_symbol"],minCells=5)
+} else {
+  stop("Species definition not known. Only human and mouse implemented currently.")
+}
+
 
 #save the number of genes after filtering
 filtered_res<-data.frame(ncells=ncol(expr_df),ngenes=nrow(expr_df))

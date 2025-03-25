@@ -14,6 +14,8 @@ library(CaSpER)
 library(data.table)
 library(Seurat)
 
+source("scripts/casper_functions_for_mouse.R")
+
 # ------------------------------------------------------------------------------
 print("Get input parameters from snakemake")
 # ------------------------------------------------------------------------------
@@ -124,7 +126,7 @@ print(dim(object@data))
 
 # Run CaSpER
 pdf(file=output_plot_density)
-final.objects <- runCaSpER(object, removeCentromere=T, cytoband=cytoband_hg38, 
+final.objects <- runCaSpER_mouse(object, removeCentromere=T, cytoband=cytoband_hg38, 
                            method="iterative")
 dev.off()
 
@@ -132,7 +134,7 @@ dev.off()
 # saveRDS(final.objects,file=output_casper_object)
 
 ## plot large scale events
-finalChrMat <- extractLargeScaleEvents(final.objects, thr=0.75)
+finalChrMat <- extractLargeScaleEventsMouse(final.objects, thr=0.75)
 
 plot.data <- reshape2::melt(finalChrMat)
 plot.data$value2 <- "neutral"
@@ -168,7 +170,7 @@ print("Get clustering")
 
 #Heatmap with normalized expression
 obj <- final.objects[[9]]
-plotHeatmap10x(object=obj, fileName=output_plot_heatmap,
+plotHeatmap10xMouse(object=obj, fileName=output_plot_heatmap,
              cnv.scale= 3, cluster_cols = F,
              cluster_rows = T, show_rownames = F, only_soi = T)
 print("Heatmap saved")

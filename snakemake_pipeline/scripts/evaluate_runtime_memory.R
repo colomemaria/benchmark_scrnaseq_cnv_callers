@@ -43,33 +43,12 @@ for(filename in all_files){
 #both version are mixed for SNU601 and the MCF7 files need to be filtered out
 benchmark_combined<-benchmark_combined[! endsWith(benchmark_combined$method,"_MCF7") &
                                          ! endsWith(benchmark_combined$method,"_MM") &
+                                         ! endsWith(benchmark_combined$method,"_SNU601") &
                                          ! endsWith(benchmark_combined$method,"_BCC06") &
                                          ! endsWith(benchmark_combined$method,"_BCC08"),]
 
 #Rename the second column name (double point makes trouble)
 colnames(benchmark_combined)[2]<-"h_m_s"
-
-#Combine Honeybadger results (if they exist both)
-h_1<-benchmark_combined[benchmark_combined$method == "honeybadger_expr_part1",]
-h_2<-benchmark_combined[benchmark_combined$method == "honeybadger_expr_part2",]
-benchmark_combined<-benchmark_combined[! benchmark_combined$method %in%
-                                         c("honeybadger_expr_part1",
-                                           "honeybadger_expr_part2"),]
-if(nrow(h_1) > 0 & nrow(h_2) > 0){
-  
-  benchmark_combined<-rbind(benchmark_combined,
-                            data.frame(s=(h_1$s + h_2$s),
-                                       h_m_s="",
-                                       max_rss=max(h_1$max_rss,h_2$max_rss),
-                                       max_vms=max(h_1$max_vms,h_2$max_vms),
-                                       max_uss=max(h_1$max_uss,h_2$max_uss),
-                                       max_pss=max(h_1$max_pss,h_2$max_pss),
-                                       io_in=NA,
-                                       io_out=NA,
-                                       mean_load=NA,
-                                       cpu_time=NA,
-                                       method="honeybadger_expr"))
-}
 
 #Combine Numbat results (if they exist both)
 h_1<-benchmark_combined[benchmark_combined$method == "numbat_preprocessing",]
@@ -144,7 +123,7 @@ h_2<-benchmark_combined[benchmark_combined$method == "CONICSmat",]
 h_3<-benchmark_combined[benchmark_combined$method == "CONICSmat_predict",]
 benchmark_combined<-benchmark_combined[! benchmark_combined$method %in%
                                          c("CONICSmat_import",
-                                           "CONICSmat"),]
+                                           "CONICSmat","CONICSmat_predict"),]
 if(nrow(h_1) > 0 & nrow(h_2) > 0){
   
   benchmark_combined<-rbind(benchmark_combined,
@@ -184,13 +163,13 @@ benchmark_combined$runtime_h<-benchmark_combined$s / 3600
 
 #Vector for renaming methods (official published names) and specifying
 #the order in the plot
-method_names<-setNames(c("HoneyBADGER","CaSpER",
+method_names<-setNames(c("CaSpER",
                          "Numbat","Numbat (wo ref)","InferCNV",
                          "CONICSmat", "CONICSmat (wo ref)",
                          "copyKat","copyKat (wo ref)",
                          "SCEVAN","SCEVAN (wo ref)",
                          "SCEVAN (subclones)"),
-                       c("honeybadger_expr","casper",
+                       c("casper",
                          "numbat","numbat_predict","infercnv",
                          "CONICSmat", "CONICSmat_predict",
                          "copykat","copykat_predict",

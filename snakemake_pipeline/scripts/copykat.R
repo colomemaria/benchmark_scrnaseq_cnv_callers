@@ -23,6 +23,13 @@ input_file<-snakemake@input$matrix
 input_annotations<-snakemake@input$annot
 input_ref_groups<-snakemake@input$ref_groups
 
+#Set genome version (human or mouse)
+input_genome<-snakemake@params$genome
+if(is.null(input_genome)){
+  input_genome<-"hg20"
+} 
+print(paste("Running CopyKat with the following genome:",input_genome))
+
 output_file<-snakemake@output$cnv_file
   
 # ------------------------------------------------------------------------------
@@ -77,7 +84,7 @@ copykat.test <- copykat(rawmat=data_matrix, #2d matrix with gene expression coun
                         distance="euclidean",
                         output.seg="FALSE",
                         plot.genes="TRUE",
-                        genome = "hg20",
+                        genome = input_genome,
                         n.cores=1)
 
 # ------------------------------------------------------------------------------

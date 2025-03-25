@@ -106,6 +106,9 @@ read_results_cnvkit_segs<-function(wes_path){
 #Read WES results from GATK (file: <filename>_clean.called.seg)
 read_wes_results_gatk<-function(wes_path){
   
+  library(GenomicRanges)
+  library(dplyr)
+  
   #Start reading at the line starting with CONTIG (everything before is header)
   wes<-fread(wes_path,skip="CONTIG")
   
@@ -274,6 +277,12 @@ read_infercnv_expr_individual_cells<-function(matrix_path,gene_path){
 read_casper<-function(input_file){
   
   casper_complete<-readRDS(input_file)
+  
+  #Check if the file is empty
+  if(is.null(casper_complete)){
+    return(NULL)
+  }
+  
   casper_score_merged<-with(casper_complete,mean_loss+(mean_base*2)+mean_gain*3)
   casper_complete$casper<-casper_score_merged
     
@@ -317,6 +326,12 @@ read_casper_individual_cells<-function(input_casper_grange,input_casper_cells){
   
   #Get position information
   casper_pseudobulk<-readRDS(input_casper_grange)
+  
+  #Check if the file is empty
+  if(is.null(casper_pseudobulk)){
+    return(NULL)
+  }
+  
   elementMetadata(casper_pseudobulk)<-NULL
   
   #Convert cells to a numeric matrix
@@ -405,12 +420,14 @@ read_copykat_individual_cells<-function(matrix_path,annot_path,ref_path){
 }
 
 #Read results from SCEVAN (normalized expression)
+# Works with two different output matrices from SCEVAN:
+# 1) _CNAmtx.RData (the matrix on all cells) => loaded file: CNA_mtx_relat
+# 2) _CNAmtxSubclones.RData (the matrix in subclonal mode) => loaded file: results.com
 read_scevan<-function(matrix_path,gene_annot,annot_path,ref_path,
                       clones=NULL){
 
   #Load normalized count matrix and gene positions
-  load(matrix_path) #results.com (when looking at the subclonal matrix)
-  CNA_mtx_relat<-results.com
+  CNA_mtx_relat<-get(load(matrix_path)) #called results.com (when looking at the subclonal matrix)
   load(gene_annot) #count_mtx_annot
   
   #Generate a grange object with pseudobulk results
@@ -422,6 +439,10 @@ read_scevan<-function(matrix_path,gene_annot,annot_path,ref_path,
   
   #Remove reference cells
   annot<-fread(annot_path,header=FALSE)
+  
+  #Reformat the matrix for SCEVAN
+  annot$V1<-gsub("\\.","_",annot$V1)
+  
   ref_groups<-fread(ref_path)
   cancer_cells<-annot$V1[!(annot$V2 %in% ref_groups$ref_groups)]
   CNA_mtx_relat<-CNA_mtx_relat[,colnames(CNA_mtx_relat) %in% cancer_cells]
@@ -455,9 +476,11 @@ read_scevan_individual_cells<-function(matrix_path,gene_annot,annot_path,ref_pat
                       clones=NULL){
   
   #Load normalized count matrix and gene positions
-  load(matrix_path) #results.com (when looking at the subclonal matrix)
-  CNA_mtx_relat<-results.com
+  CNA_mtx_relat<-get(load(matrix_path)) #called results.com (when looking at the subclonal matrix)
   load(gene_annot) #count_mtx_annot
+  
+  #Reformat the matrix for SCEVAN
+  colnames(CNA_mtx_relat)<-gsub("_","\\.",colnames(CNA_mtx_relat))
   
   #Generate a grange object with pseudobulk results
   count_mtx_annot$seqnames<-paste0("chr",count_mtx_annot$seqnames)
@@ -468,6 +491,8 @@ read_scevan_individual_cells<-function(matrix_path,gene_annot,annot_path,ref_pat
   
   #Remove reference cells
   annot<-fread(annot_path,header=FALSE)
+  annot$V1<-gsub("_","\\.",annot$V1)
+  
   ref_groups<-fread(ref_path)
   cancer_cells<-annot$V1[!(annot$V2 %in% ref_groups$ref_groups)]
   CNA_mtx_relat<-CNA_mtx_relat[,colnames(CNA_mtx_relat) %in% cancer_cells]
@@ -494,13 +519,24 @@ read_scevan_vega<-function(file_path){
 }
 
 #Read SCEVAN CN status
-read_scevan_cn_status<-function (clone1_path, clone_annot_path,binned_genome=NULL){
+read_scevan_cn_status<-function (clone1_path, clone_annot_path,
+                                 annot_path,ref_path,binned_genome=NULL){
   
   require(data.table)
   require(GenomicRanges)
   
   #Load how many cells there are per subclone (to combine them to a weighted sum)
   suppressWarnings(clone_annot<-fread(clone_annot_path))
+  clone_annot$V1<-gsub("_","\\.",clone_annot$V1)
+  
+  #Remove reference cells
+  annot<-fread(annot_path,header=FALSE)
+  annot$V1<-gsub("_","\\.",annot$V1)
+  
+  ref_groups<-fread(ref_path)
+  cancer_cells<-annot$V1[!(annot$V2 %in% ref_groups$ref_groups)]
+  
+  clone_annot<-clone_annot[clone_annot$V1 %in% cancer_cells,]
   
   #Check if significant differently subclones were found 
   #(otherwise the column named subclone is missing)
@@ -540,11 +576,17 @@ read_scevan_cn_status<-function (clone1_path, clone_annot_path,binned_genome=NUL
   
     clone_freq<-as.data.frame(table(clone_annot$subclone))
     clone_freq$perc<-clone_freq$Freq/sum(clone_freq$Freq)
-    
+  
     cnv_matrix<-as.matrix(elementMetadata(combined_clones))
+    
+    #Filter for the clones still there after removing the reference cells
+    clone_freq$Var1<-paste0("CNV_subclone",clone_freq$Var1)
+    cnv_matrix<-cnv_matrix[,clone_freq$Var1]
+    
     merged_cnv_vector<-colSums(t(cnv_matrix) * clone_freq$perc)
     elementMetadata(combined_clones)<-NULL
     combined_clones$scevan_cnv<-merged_cnv_vector
+
     
   } else {
     
@@ -572,7 +614,8 @@ read_scevan_cn_status<-function (clone1_path, clone_annot_path,binned_genome=NUL
 }
 
 #Read SCEVAN CN status - get results per cell
-read_scevan_cn_status_individual_cells<-function (clone1_path,clone_annot_path,binned_genome=NULL){
+read_scevan_cn_status_individual_cells<-function (clone1_path,clone_annot_path,
+                                                  annot_path,ref_path,binned_genome=NULL){
   
   require(data.table)
   require(GenomicRanges)
@@ -595,33 +638,65 @@ read_scevan_cn_status_individual_cells<-function (clone1_path,clone_annot_path,b
   combined_clones<-combine_range_objects(binned_genome,clone_gr,
                                          "CNV_subclone1")
   
-  #Read all other clones and combine add it to the Grange object of the first clone
-  for(fl in setdiff(all_files,clone1_path)){
-    clonename<-paste0("CNV_subclone",unlist(strsplit(gsub(".*subclone","",fl),split="_"))[[1]])
-    suppressWarnings(clone<-fread(fl))
-    clone$Chr<-paste0("chr",clone$Chr)
-    clone_gr<-makeGRangesFromDataFrame(clone,
-                                       seqnames.field="Chr",start.field="Pos",
-                                       end.field="End")
-    mcols(clone_gr)[,clonename]<-ifelse(clone$CN<2,1,ifelse(clone$CN>2,3,2))
-    combined_clones<-combine_range_objects(combined_clones,clone_gr,
-                                           clonename)
-  }
-  
   #Load how many cells there are per subclone (to combine them to a weighted sum)
   suppressWarnings(clone_annot<-fread(clone_annot_path))
-  clone_freq<-as.data.frame(table(clone_annot$subclone))
+  clone_annot$V1<-gsub("_","\\.",clone_annot$V1)
   
-  scevan_cells<-NULL
-  for(clone_number in as.numeric(clone_freq$Var1)){
-    vector<-elementMetadata(combined_clones)[,paste0("CNV_subclone",clone_number)]
-    ncells<-clone_freq$Freq[clone_number]
-    clone_matrix<-matrix(rep(vector,ncells),ncol=ncells)
-    scevan_cells<-cbind(scevan_cells,clone_matrix)
+  #Remove reference cells
+  annot<-fread(annot_path,header=FALSE)
+  annot$V1<-gsub("_","\\.",annot$V1)
+  
+  ref_groups<-fread(ref_path)
+  cancer_cells<-annot$V1[!(annot$V2 %in% ref_groups$ref_groups)]
+  
+  clone_annot<-clone_annot[clone_annot$V1 %in% cancer_cells,]
+  
+  #Check if significant differently subclones were found 
+  #(otherwise the column named subclone is missing)
+  if("subclone" %in% colnames(clone_annot)){
+    
+    #Read all other clones and combine add it to the Grange object of the first clone
+    for(fl in setdiff(all_files,clone1_path)){
+      clonename<-paste0("CNV_subclone",unlist(strsplit(gsub(".*subclone","",fl),split="_"))[[1]])
+      suppressWarnings(clone<-fread(fl))
+      clone$Chr<-paste0("chr",clone$Chr)
+      clone_gr<-makeGRangesFromDataFrame(clone,
+                                         seqnames.field="Chr",start.field="Pos",
+                                         end.field="End")
+      mcols(clone_gr)[,clonename]<-ifelse(clone$CN<2,1,ifelse(clone$CN>2,3,2))
+      combined_clones<-combine_range_objects(combined_clones,clone_gr,
+                                             clonename)
+    }
+    
+    clone_freq<-as.data.frame(table(clone_annot$subclone))
+    
+    #Remove NA values in clone annotation (from the healthy cells)
+    clone_annot<-clone_annot[! is.na(clone_annot$subclone),]
+    
+    scevan_cells<-NULL
+    for(clone_number in as.numeric(clone_freq$Var1)){
+      vector<-elementMetadata(combined_clones)[,paste0("CNV_subclone",clone_number)]
+      ncells<-clone_freq$Freq[clone_number]
+      clone_matrix<-matrix(rep(vector,ncells),ncol=ncells)
+      colnames(clone_matrix)<-clone_annot$V1[clone_annot$subclone==clone_number]
+      scevan_cells<-cbind(scevan_cells,clone_matrix)
+    }
+    
+    elementMetadata(combined_clones)<-NULL
+    return(list(combined_clones,scevan_cells))
+    
+  } else {
+    
+    #Filter cells that are filtered in SCEVAN
+    clone_annot<-clone_annot[clone_annot$class != "filtered",]
+    
+    clone_matrix<-matrix(rep(combined_clones$CNV_subclone1,nrow(clone_annot)),
+                         ncol=nrow(clone_annot))
+    colnames(clone_matrix)<-clone_annot$V1
+    
+    elementMetadata(combined_clones)<-NULL
+    return(list(combined_clones,clone_matrix))
   }
-  
-  elementMetadata(combined_clones)<-NULL
-  return(list(combined_clones,scevan_cells))
 }
 
 #Read CNV predictions for each genome
@@ -919,6 +994,9 @@ read_numbat_cnv_individual_cells<-function(file_path){
     clone_matrix<-matrix(rep(cnv_clone$numbat_cnv,ncells),ncol=ncells)
     rownames(clone_matrix)<-cnv_clone$gene
     
+    #Set also the column names correctly
+    colnames(clone_matrix)<-numbat_obj$clone_post$cell[numbat_obj$clone_post$clone_opt==clone]
+      
     #Combine the two matrices (need to use merge as rownames are not identical)
     if(is.null(numbat_cnv)){
       numbat_cnv<-clone_matrix
@@ -971,6 +1049,10 @@ read_CONICSmat<-function(input_CONICSmat_chrom_pos, input_CONICSmat_cnv,
                          clones=NULL){
   #read data from files
   chrom_pos<-read.table(input_CONICSmat_chrom_pos, sep="\t", header = T)
+  
+  #Convert it to character to match cnv file (might be integer values for mouse)
+  chrom_pos$Idf<-as.character(chrom_pos$Idf)
+  
   cnv_states<-read.table(input_CONICSmat_cnv, sep="\t", row.names = 1, header = T)
   colnames(cnv_states)<-gsub("X", "",colnames(cnv_states))
   annot<-read.table(input_annot, sep="\t", header = F)
@@ -1061,6 +1143,61 @@ read_CONICSmat_individual_cells<-function(input_CONICSmat_chrom_pos, input_CONIC
   CONICSmat_grange$Length<-NULL
   
   return(list(CONICSmat_grange,t(cnv_states)))
+}
+
+#Read results from xclone (from the comined module)
+read_xclone<-function(matrix_path){
+  
+  xclone_res<-fread(matrix_path)
+  
+  #Generate a grange object with pseudobulk results
+  xclone_res$chr<-paste0("chr",xclone_res$chr)
+  xclone_grange<-makeGRangesFromDataFrame(xclone_res,
+                                           seqnames.field="chr",
+                                           start.field="start",
+                                           end.field="end")
+  
+  #Get cell matrix
+  xclone_cells<-as.matrix(xclone_res[,! (colnames(xclone_res) %in% c("GeneName","chr","start","end")),
+                                     with=FALSE])
+  
+  #Replace all loh values (1) with copy neutral (2) for the benchmarking
+  xclone_cells[xclone_cells==1]<-2
+  #Bring the values to an equal scale of 1-2-3 => set copy loss as 1
+  xclone_cells[xclone_cells==0]<-1
+  
+  #Calculate the pseudbulk value
+  xclone_grange$xclone<-rowMeans(xclone_cells)
+
+  return(list(xclone_grange,ncol(xclone_cells)))
+}
+
+#Read results from xclone (from the expression module)
+read_xclone_expr<-function(matrix_path,annot_path,ref_path){
+  
+  xclone_res<-fread(matrix_path)
+  
+  #Generate a grange object with pseudobulk results
+  xclone_res$chr<-paste0("chr",xclone_res$chr)
+  xclone_grange<-makeGRangesFromDataFrame(xclone_res,
+                                          seqnames.field="chr",
+                                          start.field="start",
+                                          end.field="end")
+  
+  #Get cell matrix
+  xclone_cells<-as.matrix(xclone_res[,! (colnames(xclone_res) %in% c("GeneName","chr","start","end")),
+                                     with=FALSE])
+  
+  #Remove reference cells
+  annot<-fread(annot_path,header=FALSE)
+  ref_groups<-fread(ref_path)
+  cancer_cells<-annot$V1[!(annot$V2 %in% ref_groups$ref_groups)]
+  xclone_cells<-xclone_cells[,colnames(xclone_cells) %in% cancer_cells]
+  
+  #Calculate the pseudbulk value
+  xclone_grange$xclone_expr<-rowMeans(xclone_cells)+1
+  
+  return(list(xclone_grange,ncol(xclone_cells)))
 }
 
 #Function to combine output from two different functions 
@@ -1294,6 +1431,10 @@ evaluate_optimal_f1_score<-function(combined_methods,method_1,method_2="wgs"){
     gain_scores<-c(3)
   }
 
+  #Test also a break at 2 directly
+  loss_scores<-c(loss_scores,2)
+  gain_scores<-c(2,gain_scores)
+  
   #Get all pairwise threshold combinations that should be tested
   combis<-expand.grid(loss_scores,gain_scores)
   
@@ -1476,6 +1617,122 @@ evaluate_metrics_per_cell<-function(wgs_grange,method_grange,method_matrix){
   return(res_df)
 }
 
+
+# Version of evalaute_metrics_per_cell for paired data
+# => RNA and WGS results are directly matched per cell
+evaluate_metrics_per_cell_paired<-function(wgs_cell_range,wgs_cell,method_grange,method_matrix){
+  
+  require(pROC)
+
+  #Filter to contain the same number of cells
+  common_cells<-intersect(colnames(wgs_cell),colnames(method_matrix))
+  print(paste("Number of common cells:",length(common_cells)))
+  wgs_cell_filtered<-wgs_cell[,common_cells]
+  method_matrix<-method_matrix[,common_cells]
+  
+  #Combine WGS and RNA results
+  overlaps<-as.data.frame(findOverlaps(wgs_cell_range,method_grange,type="any"))
+  
+  #Filter first range (keep dimensions)
+  wgs_cell_range<-wgs_cell_range[unique(overlaps$queryHits)]
+  wgs_cell_filtered<-wgs_cell_filtered[unique(overlaps$queryHits),]
+  
+  #Map per gene counts for the methods to the WGS bins
+  combined_scores <- sapply(unique(overlaps$queryHits),
+                            function(i) {
+                              indices<-overlaps$subjectHits[overlaps$queryHits==i]
+                              if(length(indices)==1){
+                                method_matrix[indices,]
+                              } else {
+                                colMeans(method_matrix[indices,])
+                              }}) 
+  combined_scores<-t(combined_scores)
+  
+  #Get the pearson correlation estimates per cell
+  cor_per_cell<-sapply(common_cells,function(cell) cor(combined_scores[,cell],
+                                        wgs_cell_filtered[,cell],use="complete.obs"))
+  
+  #Get the AUC gain values per cell
+  auc_gain_per_cell<-sapply(common_cells,function(cell){
+    
+    #Binarize WGS results
+    wgs_bin_gain<-as.numeric(wgs_cell_filtered[,cell]>2.5)
+    
+    #Remove NA values
+    df<-data.frame(rna=combined_scores[,cell],
+                   wgs=wgs_bin_gain)
+    df<-df[!is.na(df$rna),]
+    
+    #Calculate AUC
+    pr<-prediction(df$rna, df$wgs)
+    prf<-performance(pr,'auc')
+    return(unlist(prf@y.values))})
+  
+  #Get the AUC loss values per cell
+  auc_loss_per_cell<-sapply(common_cells,function(cell){
+    
+    #Binarize WGS results
+    wgs_bin_loss<-as.numeric(wgs_cell_filtered[,cell]>=1.5)
+    
+    #Remove NA values
+    df<-data.frame(rna=combined_scores[,cell],
+                   wgs=wgs_bin_loss)
+    df<-df[!is.na(df$rna),]
+    
+    pr<-prediction(df$rna, df$wgs)
+    prf<-performance(pr,'auc')
+    return(unlist(prf@y.values))})
+  
+  #Get truncated AUC gain value per cell
+  auc_trunc_gain_per_cell<-sapply(common_cells,function(cell){
+    
+    #Binarize WGS results
+    wgs_bin_gain<-as.numeric(wgs_cell_filtered[,cell]>2.5)
+    
+    #Remove NA values
+    df<-data.frame(rna=combined_scores[,cell],
+                   wgs=wgs_bin_gain)
+    df<-df[!is.na(df$rna),]
+    
+    #Calculate sensitivity at the gain threshold
+    gain_scores_threshold<-ifelse(df$rna>2,1,0)
+    sens_threshold<-sum(gain_scores_threshold==1 & df$wgs==1)/sum(df$wgs==1)
+    
+    #Using the pROC package to get the partial AUC curve
+    suppressMessages(roc_gain <- roc(response=df$wgs, predictor=df$rna))
+    auc_gain <- auc(roc_gain, partial.auc=c(0,sens_threshold), partial.auc.focus="sens")
+    return(as.numeric(auc_gain))})
+  
+  #Get truncated AUC gain value per cell
+  auc_trunc_loss_per_cell<-sapply(common_cells,function(cell){
+    
+    #Binarize WGS results
+    wgs_bin_loss<-as.numeric(wgs_cell_filtered[,cell]>=1.5)
+    
+    #Remove NA values (invert so that loss is the positive class)
+    df<-data.frame(rna=combined_scores[,cell]*(-1),
+                   wgs=wgs_bin_loss*(-1))
+    df<-df[!is.na(df$rna),]
+    
+    #Calculate sensitivity at the loss threshold
+    loss_scores_threshold<-ifelse(df$rna>-2,1,0)
+    sens_threshold<-sum(loss_scores_threshold==1 & df$wgs==0)/sum(df$wgs==0)
+    
+    #Using the pROC package to get the partial AUC curve
+    suppressMessages(roc_loss <- roc(response=df$wgs, predictor=df$rna))
+    auc_loss <- auc(roc_loss, partial.auc=c(0,sens_threshold), partial.auc.focus="sens")
+    return(as.numeric(auc_loss))})
+  
+  res_df<-data.frame(cor=cor_per_cell,
+                     auc_gain=auc_gain_per_cell,
+                     auc_loss=auc_loss_per_cell,
+                     auc_trunc_gain=auc_trunc_gain_per_cell,
+                     auc_trunc_loss=auc_trunc_loss_per_cell)
+  return(res_df)
+}
+
+
+
 #Combine the different metrics and run them all for one specific methods
 get_all_metrics<-function(combined_range, method_name){
   
@@ -1518,3 +1775,115 @@ get_all_metrics<-function(combined_range, method_name){
   return(res)
 }
 
+plot_karyogram_paired<-function(wgs_cell_range,wgs_cell,method_grange,method_matrix,
+                      method_name){
+  
+  #Filter to contain the same number of cells
+  common_cells<-intersect(colnames(wgs_cell),colnames(method_matrix))
+  print(paste("Number of common cells:",length(common_cells)))
+  wgs_cell_filtered<-wgs_cell[,common_cells]
+  method_matrix<-method_matrix[,common_cells]
+  
+  #Combine WGS and RNA results
+  overlaps<-as.data.frame(findOverlaps(wgs_cell_range,method_grange,type="any"))
+  
+  #Filter first range (keep dimensions)
+  wgs_cell_range<-wgs_cell_range[unique(overlaps$queryHits)]
+  wgs_cell_filtered<-wgs_cell_filtered[unique(overlaps$queryHits),]
+  
+  #Map per gene counts for the methods to the WGS bins
+  combined_scores <- sapply(unique(overlaps$queryHits),
+                            function(i) {
+                              indices<-overlaps$subjectHits[overlaps$queryHits==i]
+                              if(length(indices)==1){
+                                method_matrix[indices,]
+                              } else {
+                                colMeans(method_matrix[indices,])
+                              }}) 
+  combined_scores<-t(combined_scores)
+  
+  #Cluster the cells according to hierarchical clustering
+  dist_matrix <- dist(t(wgs_cell_filtered))
+  dist_matrix[is.na(dist_matrix)] <- 0
+  hc_counts <- hclust(dist_matrix, method = "ward.D")
+  ord <- hc_counts$order
+  # dhc <- stats::as.dendrogram(hc_counts)
+  # ddata <- ggdendro::dendro_data(dhc)#, type = "rectangle")
+  # ggdndr <- ggplot(ddata$segments) + geom_segment(aes_string(x='x', xend='xend', y='y', yend='yend')) + scale_y_reverse()
+  # ggdndr <- ggdndr + coord_flip() + labs(title = "", subtitle = "")
+  # ggdndr <- ggdndr + theme(panel.background=element_blank(), 
+  #                          axis.ticks=element_blank(), 
+  #                          axis.text=element_blank(), 
+  #                          axis.line=element_blank(), 
+  #                          axis.title=element_blank(),
+  #                          panel.grid.minor=element_blank(),
+  #                          plot.title = element_text(size=18),
+  #                          plot.subtitle=element_text(size=12))
+  
+  #Get chromosome breaks
+  bin_positions<-as.data.frame(wgs_cell_range)
+  bin_positions$counted_pos<-1:nrow(bin_positions)
+  chr_boundries<-bin_positions%>%
+    group_by(seqnames)%>%
+    summarize(start_chr=min(counted_pos),
+              mean_chr=mean(counted_pos))
+  
+  #Plot karyogram of scWGS data
+  scaled_data <- (wgs_cell_filtered - 2) / sd(wgs_cell_filtered)
+  plot_data<-as.data.frame(scaled_data)
+  plot_data$counted_pos<-1:nrow(bin_positions)
+  plot_data<-reshape2::melt(plot_data,
+                            id.vars=c("counted_pos"))
+  
+  plot_data$variable<-factor(plot_data$variable, 
+                             levels=colnames(wgs_cell_filtered)[ord])
+  
+  g.1<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+    theme_bw()+
+    scale_fill_gradient2("Score",low = "darkblue",
+                         mid = "white",high = "darkred",midpoint = 0,
+                         breaks=c(-5,0,5))+
+    xlab("Chromosome position")+ylab("scWGS")+
+    geom_vline(xintercept = chr_boundries$start_chr)+
+    scale_x_continuous(breaks=chr_boundries$mean_chr,
+                       labels=chr_boundries$seqnames)+
+    scale_y_discrete(limits=rev)+
+    coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+    theme(legend.position="none",
+          axis.text.x = element_blank(), #text(angle=90,vjust=0.5,hjust=1),
+          axis.title.x = element_blank(),
+          text=element_text(size=16),
+          axis.text.y=element_blank())
+  
+  #Plot karyogram of scRNAseq data
+  scaled_data <- (combined_scores - 2) / sd(combined_scores)
+  plot_data<-as.data.frame(scaled_data)
+  plot_data$counted_pos<-1:nrow(bin_positions)
+  plot_data<-reshape2::melt(plot_data,
+                            id.vars=c("counted_pos"))
+  
+  plot_data$variable<-factor(plot_data$variable, 
+                             levels=colnames(wgs_cell_filtered)[ord])
+  
+  g.2<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+    theme_bw()+
+    scale_fill_gradient2("Score",low = "darkblue",
+                         mid = "white",high = "darkred",midpoint = 0,
+                         breaks=c(-5,0,5),limits = c(-5,5),
+                         labels=c("loss","base","gain"))+
+    xlab("Chromosome position")+ylab(method_name)+
+    geom_vline(xintercept = chr_boundries$start_chr)+
+    scale_x_continuous(breaks=chr_boundries$mean_chr,
+                       labels=chr_boundries$seqnames)+
+    scale_y_discrete(limits=rev)+
+    coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+    theme(legend.position="bottom",
+          axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+          text=element_text(size=16),
+          axis.text.y=element_blank())
+  
+  g<-ggarrange(g.1,g.2,ncol=1, heights=c(0.8,1))
+  
+  return(g)
+  
+}

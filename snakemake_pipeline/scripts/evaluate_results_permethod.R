@@ -167,6 +167,7 @@ print("Evaluate SCEVAN (CNV)")
 binned_genome<-combined_range
 elementMetadata(binned_genome)<-NULL
 scevan_results<-read_scevan_cn_status(input_scevan_clone1, input_scevan_annot,
+                                      input_annot, input_ref_groups,
                                       binned_genome)
 
 combined_range<-combine_range_objects(combined_range,scevan_results,

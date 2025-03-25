@@ -22,6 +22,33 @@ input_annotations<-snakemake@input$annot
 input_ref_groups<-snakemake@input$ref_groups
 input_allele_path <- snakemake@input$df_allele
 
+#Set gamma value based on technologs (20 for 10X, 5 for Smart-seq2)
+input_gamma<-snakemake@params$gamma
+if(is.null(input_gamma)){
+  input_gamma<-20
+} else {
+  input_gamma<-as.numeric(input_gamma)
+}
+print(paste("Running Numbat with the following gamma cutoff",input_gamma))
+
+#Set LLR value (can be lowered in case no CNVs are found)
+input_min_LLR<-snakemake@params$min_LLR
+if(is.null(input_min_LLR)){
+  input_min_LLR<-5
+} else {
+  input_min_LLR<-as.numeric(input_min_LLR)
+}
+print(paste("Running Numbat with the following min LLR threshold",input_min_LLR))
+
+#Set minimal number of cells (the smaller datasets don't have even 50 cells)
+input_min_cells<-snakemake@params$min_cells
+if(is.null(input_min_cells)){
+  input_min_cells<-20
+} else {
+  input_min_cells<-as.numeric(input_min_cells)
+}
+print(paste("Running Numbat with the following min_cells threshold:",input_min_cells))
+
 out_cnv_expr <- snakemake@output$cnv_expr
 
 threads<-snakemake@threads
@@ -64,7 +91,10 @@ out = run_numbat(
   t = 1e-5,
   ncores = threads,
   plot = TRUE,
-  out_dir = dirname(out_cnv_expr)
+  out_dir = dirname(out_cnv_expr),
+  gamma = input_gamma, #For 10X: 20, for Smartseq 5 (dispersion parameter for allele model)
+  min_LLR = input_min_LLR,
+  min_cells = input_min_cells
 )
 
 # ------------------------------------------------------------------------------
