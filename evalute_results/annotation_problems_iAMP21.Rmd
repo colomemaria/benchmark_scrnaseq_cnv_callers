@@ -1,0 +1,162 @@
+---
+title: "Check annotation problems iAMP21"
+author: "Katharina Schmid"
+date: "2025-01-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "..")
+
+library(data.table)
+library(Seurat)
+```
+
+
+
+## Check the annotations from CopyKat and SCEVAN
+
+Problem: both CopyKat and SCEVAN fail to annotate the cells properly
+
+```{r}
+
+seurat_obj<-readRDS("data/iAMP21/seurat_obj.RDS")
+
+#Percentage of cancer cells
+print(round(mean(Idents(seurat_obj)=="Blast"),3))
+
+#Percentage of non-cancer cells
+print(round(mean(Idents(seurat_obj)!="Blast"),3))
+
+```
+
+### Check CopyKat
+
+```{r}
+
+copykat_pred<-fread("snakemake_pipeline/results/output_iAMP21/copykat_predict_cancer_cells/iAMP21_copykat_prediction.txt")
+table(copykat_pred$copykat.pred)
+
+seurat_obj$copykat_pred<-"filtered"
+seurat_obj$copykat_pred[copykat_pred$cell.names]<-copykat_pred$copykat.pred
+
+table(Idents(seurat_obj),seurat_obj$copykat_pred)
+
+```
+
+```{r}
+
+DimPlot(seurat_obj, reduction = "umap", group.by="copykat_pred")
+
+```
+
+### Check SCEVAN
+
+```{r}
+
+scevan_pred<-fread("snakemake_pipeline/results/output_iAMP21/scevan_predict_cancer_cells/output/iAMP21_scevan_prediction.txt")
+table(copykat_pred$class)
+
+seurat_obj$scevan_pred<-"filtered"
+seurat_obj$scevan_pred[scevan_pred$V1]<-scevan_pred$class
+
+table(Idents(seurat_obj),seurat_obj$scevan_pred)
+
+```
+
+
+```{r}
+
+DimPlot(seurat_obj, reduction = "umap", group.by="scevan_pred")
+
+```
+
+
+Extract the confidental normal cells from SCEVAN defined as seed for the analysis:
+
+```{r}
+res_proc<-readRDS("snakemake_pipeline/results/output_iAMP21/scevan_predict_cancer_cells/output/first_healthy_cell_annotation.RDS")
+
+table(res_proc$norm_cell)
+
+seurat_obj$scevan_normal<-"no"
+seurat_obj$scevan_normal[names(res_proc$norm_cell)]<-res_proc$norm_cell
+
+table(Idents(seurat_obj),seurat_obj$scevan_normal)  
+
+DimPlot(seurat_obj, reduction = "umap")
+
+DimPlot(seurat_obj, reduction = "umap", 
+        cells.highlight	=list("Bcell"=names(res_proc$norm_cell)[res_proc$norm_cell=="Bcells"],
+                              "macro"=names(res_proc$norm_cell)[res_proc$norm_cell=="macro"],
+                              "Tcell"=names(res_proc$norm_cell)[res_proc$norm_cell=="Tcell"]),
+        cols.highlight =c("darkred","darkgreen","darkblue") )
+
+```
+
+## Check the other three datasets - how did the initial annotation work for them
+
+### MM dataset
+
+```{r}
+
+dataset<-"MM"
+res_proc<-readRDS(paste0("snakemake_pipeline/results/output_",dataset,
+                         "/scevan_predict_cancer_cells/output/first_healthy_cell_annotation.RDS"))
+
+table(res_proc$norm_cell)
+
+annot<-fread(paste0("snakemake_pipeline/data/input_",dataset,"/sample_annotation.txt"),header=FALSE)
+annot<-as.data.frame(annot)
+rownames(annot)<-annot$V1
+
+annot$scevan_normal<-"no"
+annot[names(res_proc$norm_cell),]$scevan_normal<-res_proc$norm_cell
+
+annot[annot$scevan_normal != "no",]
+
+```
+### BCC06 dataset
+
+BCC06: found no confident normal cells, used a synthetic baseline
+
+```{r}
+
+dataset<-"BCC06"
+res_proc<-readRDS(paste0("snakemake_pipeline/results/output_",dataset,
+                         "/scevan_predict_cancer_cells/output/first_healthy_cell_annotation.RDS"))
+
+table(res_proc$norm_cell)
+
+# annot<-fread(paste0("snakemake_pipeline/data/input_",dataset,"/sample_annotation.txt"),header=FALSE)
+# annot<-as.data.frame(annot)
+# rownames(annot)<-annot$V1
+# 
+# annot$scevan_normal<-"no"
+# annot[names(res_proc$norm_cell),]$scevan_normal<-res_proc$norm_cell
+# 
+# annot[annot$scevan_normal != "no",]
+
+```
+
+### BCC06post dataset
+
+```{r}
+
+dataset<-"BCC06post"
+res_proc<-readRDS(paste0("snakemake_pipeline/results/output_",dataset,
+                         "/scevan_predict_cancer_cells/output/first_healthy_cell_annotation.RDS"))
+
+table(res_proc$norm_cell)
+
+annot<-fread(paste0("snakemake_pipeline/data/input_",dataset,"/sample_annotation.txt"),header=FALSE)
+annot<-as.data.frame(annot)
+rownames(annot)<-annot$V1
+
+annot$scevan_normal<-"no"
+annot[names(res_proc$norm_cell),]$scevan_normal<-res_proc$norm_cell
+
+table(annot$V2,annot$scevan_normal)
+
+```

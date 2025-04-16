@@ -4,10 +4,9 @@
 
 library(data.table)
 
-dataset_names<-c("SNU601","SNU601_sample20","SNU601_sample40","SNU601_sample60",
-                 "SNU601_sample80","NCIN87","MKN45","KATOIII",
+dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU16","SNU668","HGC27",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7","iAMP21","COLO320","MM","BCC06","BCC06post")
 
 
 #Get Numbat SNPs

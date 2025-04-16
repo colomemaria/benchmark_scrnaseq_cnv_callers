@@ -7,9 +7,7 @@ library(Seurat)
 
 dataset_names<-c("SNU601","NCIN87","MKN45","MCF7","KATOIII","NUGC4","SNU638",
                  "HGC27","SNU16","SNU668",
-                 "MM","BCC06","BCC06post","COLO320",
-                 "SNU601_sample20","SNU601_sample40","SNU601_sample60",
-                 "SNU601_sample80")
+                 "MM","BCC06","BCC06post","COLO320", "iAMP21")
 
 dataset_charac<-NULL
 for(dataset in dataset_names){
@@ -36,8 +34,8 @@ for(dataset in dataset_names){
   seurat_obj <- CreateSeuratObject(counts = data_matrix[,cancer_cells],
                                    min.cells = 3)
   seurat_obj <- NormalizeData(seurat_obj, normalization.method = "LogNormalize")
-  #norm_matrix <- seurat_obj@assays$RNA@data
-  norm_matrix <- seurat_obj@assays$RNA$data
+  
+  norm_matrix <- seurat_obj@assays$RNA@data
   means<-rowMeans(norm_matrix)
   sds<-apply(norm_matrix,1,sd)
   coef_var<-sqrt(exp(sds^2)-1)

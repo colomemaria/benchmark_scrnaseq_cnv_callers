@@ -33,18 +33,19 @@ Don't show SNU601 subsampled runs for now (not sure whether we want to include t
 dataset_names<-c("SNU601",#"SNU601_sample20","SNU601_sample40","SNU601_sample60","SNU601_sample80",
                  "NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU668","HGC27", "SNU16",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7","iAMP21","COLO320",
+                 "MM","BCC06","BCC06post")
 dataset_ending<-setNames(c("",#"","","","",
                            "","","",
                            "","","","", "",
-                           "","_cnvkit","_wes","_wes","_wes"),
+                           "","","_cnvkit","_wes","_wes","_wes"),
                          dataset_names)
 
 #Match type of ground truth
 dataset_groundtruth<-setNames(c("WGS_samelab",#"WGS_samelab","WGS_samelab","WGS_samelab","WGS_samelab",
                                 "WGS_samelab","WGS_samelab","WGS_samelab",
                                 "WGS_samelab","WGS_samelab","WGS_samelab","WGS_samelab", "WGS_samelab",
-                                "WGS_otherlab","WGS_otherlab","WES_samelab","WES_samelab","WES_samelab"),
+                                "WGS_otherlab","WGS_otherlab","WGS_otherlab","WES_samelab","WES_samelab","WES_samelab"),
                               dataset_names)
 
 #Vector for renaming methods (official published names)
@@ -328,7 +329,7 @@ ggplot(all_evals_part3,aes(x=method,y=value,color=method))+
 ```
 Plot as included in the ISMB abstract:
 
-```{r, fig.height=10,fig.width=8}
+```{r, fig.height=10,fig.width=8, eval=FALSE}
 
 library(RColorBrewer)
 library(ggpubr)
@@ -478,174 +479,100 @@ corr_feature_f1<-NULL
 
 ```
 
+```{r}
+assess_feature<-function(plot_char,feature_name,xlab_text="Correlation"){
+  #Evaluate correlation
+  g<-ggplot(plot_char,aes(x=value,y=.data[[feature_name]],color=dataset))+
+    geom_point()+ geom_smooth(method='lm',color="black",se=FALSE)+
+    facet_wrap(~method)+xlab(xlab_text)
+  print(g)
+  
+  corr<-plot_char%>%
+    group_by(method)%>%
+    summarize(cor=cor(value,.data[[feature_name]]),
+              cor_pval=cor.test(value,.data[[feature_name]])$p.value)%>%
+    as.data.frame()
+  
+  corr$p_adjust<-p.adjust(corr$cor_pval,method="BH")
+  print(kable(corr))
+  
+  corr$type<-feature_name
+  
+  return(corr)
+}
+```
+
 ### Number cancer cells
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=num_cancer_cells,color=dataset))+
-  geom_point()+ geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,num_cancer_cells))%>%
-  as.data.frame()
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_cancer_cells"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"num_cancer_cells",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
 #Evaluate F1 score
-ggplot(plot_char_f1,aes(x=value,y=num_cancer_cells,color=dataset))+
-  geom_point()+ geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,num_cancer_cells))%>%
-  as.data.frame()
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_cancer_cells"
+corr<-assess_feature(plot_char_f1,"num_cancer_cells",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
 
 ### Number reference cells
 
+Remark - this part is not run, as the number of reference cells is the same for many datasets
+
 ```{r,fig.width=12,eval=FALSE}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=num_ref_cells,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,num_ref_cells))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_ref_cells"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"num_ref_cells",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate maximal F1 score
-ggplot(plot_char_f1,aes(x=value,y=num_ref_cells,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,num_ref_cells))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_ref_cells"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"num_ref_cells",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
-
 ```
 
 ### Mean UMI counts in cancer cells
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_umi_cancer,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_cancer))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_cancer"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_umi_cancer",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_umi_cancer,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_cancer))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_cancer"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_umi_cancer",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
 
 ### Mean UMI counts in reference cells
 
+Again not evaluated - same as with the number of reference cells before
+
 ```{r,fig.width=12, eval=FALSE}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_umi_ref,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_ref))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_ref"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_umi_ref",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_umi_ref,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_ref))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_ref"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_umi_ref",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
 
 ### Mean UMI counts in all cells
 
+Associated with the mean UMI in the reference cells (so also skipped)
+
 ```{r,fig.width=12, eval=FALSE}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_umi_total,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_total))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_total"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_umi_total",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_umi_total,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_umi_total))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_umi_total"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_umi_total",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -654,32 +581,12 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_coef_var,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_coef_var))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_coef_var"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_coef_var",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_coef_var,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_coef_var))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_coef_var"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_coef_var",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -688,32 +595,12 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_drop_cell,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_drop_cell))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_drop_cell"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_drop_cell",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_drop_cell,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_drop_cell))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_drop_cell"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_drop_cell",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -722,32 +609,12 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_char,aes(x=value,y=mean_nonZeroGenes_cell,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_nonZeroGenes_cell))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_nonZeroGenes_cell"
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"mean_nonZeroGenes_cell",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_char_f1,aes(x=value,y=mean_nonZeroGenes_cell,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,mean_nonZeroGenes_cell))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"mean_nonZeroGenes_cell"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"mean_nonZeroGenes_cell",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -756,36 +623,17 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 ### Mean number of total counts (UMI per cell * number cells)
 
 ```{r,fig.width=12}
+
 #Calculate additionally the total counts of the dataset
 plot_char$total_cancer_umi<-plot_char$num_cancer_cells*plot_char$mean_umi_cancer
-
-ggplot(plot_char,aes(x=value,y=total_cancer_umi,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_char%>%
-  group_by(method)%>%
-  summarize(cor(value,total_cancer_umi))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"total_cancer_umi"
-corr_feature_pearson<-rbind(corr_feature_pearson,corr)
-
-#Calculate additionally the total counts of the dataset
 plot_char_f1$total_cancer_umi<-plot_char_f1$num_cancer_cells*plot_char_f1$mean_umi_cancer
 
-ggplot(plot_char_f1,aes(x=value,y=total_cancer_umi,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")+ylab("Total UMI counts")
+#Evaluate the correlation
+corr<-assess_feature(plot_char,"total_cancer_umi",xlab_text="Correlation")
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-corr<-plot_char_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,total_cancer_umi))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"total_cancer_umi"
+#Evaluate F1 score
+corr<-assess_feature(plot_char_f1,"total_cancer_umi",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 #Get also values for AUC trunc gain and AUC trunc losses
@@ -810,7 +658,7 @@ for(metr in c("auc_gains_trunc","auc_losses_trunc")){
 
 Select specifically the SNU601 cell line to prove the trend:
 
-```{r}
+```{r,eval=FALSE}
 
 plot_char_f1_filtered<-plot_char_f1[startsWith(plot_char_f1$dataset,"SNU601"),]
 ggplot(plot_char_f1_filtered,aes(x=value,y=total_cancer_umi,color=dataset))+
@@ -896,6 +744,9 @@ ggplot(bin_counts,aes(x=dataset,y=num_breakpoints,fill=dataset))+
   theme(legend.position="none",
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
 
+print("Correlation between fraction gained and fraction CNVs total")
+print(cor(bin_counts$fraction_gain,bin_counts$fraction_cnvs))
+
 ```
 
 Check whether there is a correlation of UMI coverage and number of bins:
@@ -910,6 +761,7 @@ ggplot(plot_bins,aes(x=num_coverage,y=mean_umi_cancer,color=dataset))+
 plot_bins$cancer_coverage<-plot_bins$mean_umi_cancer * plot_bins$num_cancer_cells
 ggplot(plot_bins,aes(x=num_coverage,y=cancer_coverage,color=dataset))+
   geom_point()+xlab("Number genomic bins")+ylab("Coverage cancer matrix (total UMI counts)")
+
 ```
 
 Same plot but without MCF7:
@@ -951,38 +803,19 @@ ggplot(plot_bins[!plot_bins$dataset %in% c("BCC06","BCC06post","MM"),],
 ### Fraction of gain CNVs
 
 ```{r,fig.width=12}
-#Compare results using correlation 
+
 plot_bins<-merge(all_evals[all_evals$metric == "pearson",],bin_counts,
                  by="dataset")
 
-ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_bins%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_gain))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_gain"
-corr_feature_pearson<-rbind(corr_feature_pearson,corr)
-
-#Compare results using F1 score 
 plot_bins_f1<-merge(all_evals[all_evals$metric == "max_f1",],bin_counts,
                  by="dataset")
 
-ggplot(plot_bins_f1,aes(x=value,y=fraction_gain,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
+#Compare results using correlation 
+corr<-assess_feature(plot_bins,"fraction_gain",xlab_text="Correlation")
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-corr<-plot_bins_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_gain))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_gain"
+#Compare results using F1 score 
+corr<-assess_feature(plot_bins_f1,"fraction_gain",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -991,33 +824,14 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_bins%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_loss))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_loss"
+#Compare results using correlation 
+corr<-assess_feature(plot_bins,"fraction_loss",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate maximal F1 score
-ggplot(plot_bins_f1,aes(x=value,y=fraction_loss,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_bins_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_loss))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_loss"
+#Compare results using F1 score 
+corr<-assess_feature(plot_bins_f1,"fraction_loss",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
+
 
 ```
 
@@ -1025,32 +839,12 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r,fig.width=12}
 
-#Evaluate correlation
-ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_bins%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_cnvs))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_cnvs"
+#Compare results using correlation 
+corr<-assess_feature(plot_bins,"fraction_cnvs",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_bins_f1,aes(x=value,y=fraction_cnvs,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_bins_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,fraction_cnvs))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"fraction_cnvs"
+#Compare results using F1 score 
+corr<-assess_feature(plot_bins_f1,"fraction_cnvs",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -1059,33 +853,14 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r}
 
-#Evaluate correlation
-ggplot(plot_bins,aes(x=value,y=num_coverage,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_bins%>%
-  group_by(method)%>%
-  summarize(cor(value,num_coverage))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_genomic_regions"
+#Compare results using correlation 
+corr<-assess_feature(plot_bins,"num_coverage",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_bins_f1,aes(x=value,y=num_coverage,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_bins_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,num_coverage))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_genomic_regions"
+#Compare results using F1 score 
+corr<-assess_feature(plot_bins_f1,"num_coverage",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
+
 
 ```
 
@@ -1098,68 +873,17 @@ Only include (sc)WGS data:
 plot_bins_wgs<-plot_bins[! plot_bins$dataset %in% c("BCC06","BCC06post","MM"),]
 plot_bins_f1_wgs<-plot_bins_f1[! plot_bins_f1$dataset %in% c("BCC06","BCC06post","MM"),]
   
-#Evaluate correlation
-ggplot(plot_bins_wgs,aes(x=value,y=num_breakpoints,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_bins_wgs%>%
-  group_by(method)%>%
-  summarize(cor(value,num_breakpoints))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_breakpoints"
+#Compare results using correlation 
+corr<-assess_feature(plot_bins_wgs,"num_breakpoints",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate F1
-ggplot(plot_bins_f1_wgs,aes(x=value,y=num_breakpoints,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_bins_f1_wgs%>%
-  group_by(method)%>%
-  summarize(cor(value,num_breakpoints))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"num_breakpoints"
+#Compare results using F1 score 
+corr<-assess_feature(plot_bins_f1_wgs,"num_breakpoints",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
-```
-
-
-```{r,fig.width=12}
-# #Compare results
-# plot_bins<-merge(all_evals[all_evals$metric == "auc_gains",],bin_counts,
-#                  by="dataset")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Gains)")
 
 ```
 
-```{r,fig.width=12}
-# #Compare results
-# plot_bins<-merge(all_evals[all_evals$metric == "auc_losses",],bin_counts,
-#                  by="dataset")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_gain,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_loss,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
-# 
-# ggplot(plot_bins,aes(x=value,y=fraction_cnvs,color=dataset))+
-#   geom_point()+facet_wrap(~method)+xlab("AUC (Losses)")
-
-```
 
 ### Combine all
 
@@ -1290,6 +1014,7 @@ ggplot(snp_calls,aes(x=numbat_cells_wsnp,y=num_cancer_cells,color=dataset))+
 ```
 
 ### Numbat cells with snps
+
 ```{r, fig.width=12,fig.height=5}
 
 #Evaluate correlation
@@ -1297,33 +1022,19 @@ plot_snp<-merge(all_evals[all_evals$metric == "pearson",],snp_calls,
                  by="dataset")
 plot_snp<-plot_snp[plot_snp$method %in% c("CaSpER","Numbat (CNV)"),]
 
-ggplot(plot_snp,aes(x=value,y=numbat_cells_wsnp,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_snp%>%
-  group_by(method)%>%
-  summarize(cor(value,numbat_cells_wsnp))
-kable(corr)
-colnames(corr)<-c("method","cor")
-corr$type<-"numbat_cells_wsnp"
-corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
 #Evaluate the maximal F1 score
 plot_snp_f1<-merge(all_evals[all_evals$metric == "max_f1",],snp_calls,
                  by="dataset")
 plot_snp_f1<-plot_snp_f1[plot_snp_f1$method %in% c("CaSpER","Numbat (CNV)"),]
 
-ggplot(plot_snp_f1,aes(x=value,y=numbat_cells_wsnp,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
 
-corr<-plot_snp_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,numbat_cells_wsnp))
-kable(corr)
-colnames(corr)<-c("method","cor")
-corr$type<-"numbat_cells_wsnp"
+#Compare results using correlation 
+corr<-assess_feature(plot_snp,"numbat_cells_wsnp",xlab_text="Correlation")
+corr_feature_pearson<-rbind(corr_feature_pearson,corr)
+
+#Compare results using F1 score 
+corr<-assess_feature(plot_snp_f1,"numbat_cells_wsnp",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -1340,38 +1051,19 @@ ggplot(plot_snp,aes(x=value,y=numbat_mean_DP*numbat_cells_wsnp,color=dataset))+
 plot_snp%>%
   group_by(method)%>%
   summarize(cor(value,numbat_total_dp))
+
 ```
 
 ### Numbat number of SNPs
 
 ```{r, fig.width=12,fig.height=5}
 
-#Evaluate the correlation
-ggplot(plot_snp,aes(x=value,y=numbat_nsnps,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_snp%>%
-  group_by(method)%>%
-  summarize(cor(value,numbat_nsnps))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"numbat_nsnps"
+#Compare results using correlation 
+corr<-assess_feature(plot_snp,"numbat_nsnps",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate the maximal F1 score
-ggplot(plot_snp_f1,aes(x=value,y=numbat_nsnps,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Maximal F1 score")
-
-corr<-plot_snp_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,numbat_nsnps))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"numbat_nsnps"
+#Compare results using F1 score 
+corr<-assess_feature(plot_snp_f1,"numbat_nsnps",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -1380,32 +1072,12 @@ corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```{r, fig.width=12,fig.height=5}
 
-#Evaluate the correlation
-ggplot(plot_snp,aes(x=value,y=casper_nsnps,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_snp%>%
-  group_by(method)%>%
-  summarize(cor(value,casper_nsnps))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"casper_nsnps"
+#Compare results using correlation 
+corr<-assess_feature(plot_snp,"casper_nsnps",xlab_text="Correlation")
 corr_feature_pearson<-rbind(corr_feature_pearson,corr)
 
-#Evaluate the maximal F1 score
-ggplot(plot_snp_f1,aes(x=value,y=casper_nsnps,color=dataset))+
-  geom_point()+geom_smooth(method='lm',color="black",se=FALSE)+
-  facet_wrap(~method)+xlab("Correlation")
-
-corr<-plot_snp_f1%>%
-  group_by(method)%>%
-  summarize(cor(value,casper_nsnps))
-kable(corr)
-
-colnames(corr)<-c("method","cor")
-corr$type<-"casper_nsnps"
+#Compare results using F1 score 
+corr<-assess_feature(plot_snp_f1,"casper_nsnps",xlab_text="Maximal F1 score")
 corr_feature_f1<-rbind(corr_feature_f1,corr)
 
 ```
@@ -1456,11 +1128,69 @@ g<-ggplot(corr_feature_f1,aes(x=method,y=type,fill=cor))+
 
 print(g)
 
+#Save both result files
+write.table(corr_feature_pearson,"results/correlation_datafeatures_pearson.tsv")
+write.table(corr_feature_f1,"results/correlation_datafeatures_maxf1score.tsv")
+
 ```
+
+Check also the p-values
+
+=> the issue: the sample size is small and then we do so many tests ... 
+
+```{r}
+
+#P-value categories
+corr_feature_pearson$fdr<-p.adjust(corr_feature_pearson$cor_pval,method="BH")
+
+ggplot(corr_feature_pearson,aes(x=method,y=type,fill=cor_pval>0.1))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset characteristics")+
+  ggtitle("Correlation raw p-values between characterstics and correlation")+
+  #scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor_pval,2)),
+                #color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  #scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+#P-value categories
+corr_feature_f1$fdr<-p.adjust(corr_feature_f1$cor_pval,method="BH")
+
+ggplot(corr_feature_f1,aes(x=method,y=type,fill=cor_pval>0.1))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset characteristics")+
+  ggtitle("Correlation raw p-values between characterstics and correlation")+
+  #scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor_pval,2)),
+                #color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  #scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+```
+
+Check the total correlation values:
+
+```{r}
+
+cor_summary<-corr_feature_f1%>%
+  group_by(type)%>%
+  summarize(min=min(abs(cor)),max=max(abs(cor)),
+            mean=mean(abs(cor)),median=median(abs(cor)))
+
+cor_summary[order(cor_summary$mean,decreasing=TRUE),]
+
+```
+
+
 
 ## Test everything using a linear regression model
 
 ```{r}
+
 all_charac<-merge(dataset_char,bin_counts,by="dataset")
 kable(all_charac)
 
