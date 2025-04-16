@@ -1,0 +1,214 @@
+---
+title: "Cell type annotation iAMP21"
+author: "Katharina Schmid"
+date: "2025-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+knitr::opts_knit$set(root.dir = "..")
+
+library(Seurat)
+library(data.table)
+library(Matrix)
+library(ggplot2)
+```
+
+## Process iAMP21 dataset and add cell type annotation
+
+### Create Seurat object, quality control & filtering
+
+```{r}
+
+#Load cellranger count matrix
+counts<-readMM("data/iAMP21/filtered_feature_bc_matrix/matrix.mtx.gz")
+genenames<-read.table("data/iAMP21/filtered_feature_bc_matrix/features.tsv.gz")
+cellnames<-read.table("data/iAMP21/filtered_feature_bc_matrix/barcodes.tsv.gz")
+
+colnames(counts)<-cellnames$V1
+rownames(counts)<-genenames$V2
+
+#Combine duplicate gene names to one row
+counts<-apply(counts, 2, tapply, as.factor(genenames$V2),sum, na.rm=T)
+  
+#Create a Seurat object
+seurat_obj <- CreateSeuratObject(counts=counts,min.cells=3,min.features=200)
+
+seurat_obj
+
+```
+
+```{r}
+
+#Calculate the percentage of mitochondrial counts
+seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,
+        layer="count")
+
+```
+
+```{r}
+plot1 <- FeatureScatter(seurat_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(seurat_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+```{r}
+ggplot(seurat_obj@meta.data,aes(x=nCount_RNA))+
+  geom_histogram()
+
+ggplot(seurat_obj@meta.data,aes(x=nFeature_RNA))+
+  #geom_vline(xintercept=500)+
+  geom_histogram(bins=50)
+
+```
+
+```{r}
+
+seurat_obj <- subset(seurat_obj, subset = percent.mt < 10)
+seurat_obj
+
+```
+```{r}
+ggplot(seurat_obj@meta.data,aes(x=nCount_RNA))+
+  geom_histogram()
+
+ggplot(seurat_obj@meta.data,aes(x=nFeature_RNA))+
+  geom_vline(xintercept=500)+
+  geom_histogram(bins=50)
+
+```
+
+### Normalize data
+
+```{r}
+
+seurat_obj<-NormalizeData(seurat_obj,normalization.method = "LogNormalize",
+                          scale.factor=10000)
+
+
+```
+
+### Identify highly variable features
+
+```{r,fig.height=4,fig.width=10}
+
+seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat_obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+```
+
+## PCA
+
+```{r}
+
+#Scale the data
+all.genes <- rownames(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj, features = all.genes)
+
+seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(object = seurat_obj),
+                     verbose=FALSE)
+DimPlot(seurat_obj, reduction = "pca")
+```
+```{r}
+ElbowPlot(seurat_obj)
+```
+
+## Find clusters
+
+```{r}
+seurat_obj <- FindNeighbors(seurat_obj, dims = 1:10)
+seurat_obj <- FindClusters(seurat_obj, resolution = 1)
+```
+## Plot UMAP
+
+```{r}
+
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:10)
+DimPlot(seurat_obj, reduction = "umap")
+
+```
+Show coverage:
+
+```{r}
+FeaturePlot(seurat_obj, features = c("nCount_RNA"))
+```
+
+## Annotate clusters based on marker genes
+
+Cell labels	Key annotation markers
+B	MS4A1
+DC	FCER1A
+Erythroid	HBD
+HSC/MPP and pro.	GATA2
+Monocyte	LYZ
+Plasmablast	TNFRSF17
+T_NK	CD3D
+
+
+```{r}
+#GATA2 and FCER1A not expressed high enough in our dataset
+#used_marker_genes <- c("MS4A1", "FCER1A","HBD","GATA2","LYZ","TNFRSF17","CD3D")
+used_marker_genes <- c("MS4A1", "HBD","LYZ","TNFRSF17","CD3D")
+VlnPlot(seurat_obj, features = used_marker_genes)
+
+FeaturePlot(seurat_obj, features = used_marker_genes)
+
+```
+
+```{r}
+
+new.cluster.ids <- rep("Blast", 18)
+new.cluster.ids[14]<-"T_NK"
+new.cluster.ids[15]<-"B"
+new.cluster.ids[16]<-"T_NK"
+new.cluster.ids[17]<-"Erythroid"
+names(new.cluster.ids) <- levels(seurat_obj)
+seurat_obj <- RenameIdents(seurat_obj, new.cluster.ids)
+DimPlot(seurat_obj, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+```
+
+```{r}
+
+used_marker_genes <- c("MS4A1", "HBD","LYZ","TNFRSF17","CD3D")
+
+VlnPlot(seurat_obj, features = used_marker_genes)
+
+```
+
+```{r}
+
+#Save sample annotation
+meta_data<-seurat_obj@meta.data
+sample_annot<-data.frame(barcode=rownames(meta_data),
+                         sample=as.character(Idents(seurat_obj)))
+
+#Replace Blast by iAMP21 (for benchmarking pipeline)
+sample_annot$sample[sample_annot$sample=="Blast"]<-"iAMP21"
+
+write.table(sample_annot, file="data/iAMP21/input_iAMP21/sample_annotation.txt",
+            sep="\t",quote=FALSE,row.names=FALSE,col.names=FALSE)
+
+
+df_refs<-data.frame(ref_groups=setdiff(unique(sample_annot$sample),"iAMP21"))
+write.table(df_refs, file="data/iAMP21/input_iAMP21/ref_groups.txt",
+            sep="\t",quote=FALSE,row.names=FALSE,col.names=TRUE)
+
+#Save the reduced count matrix
+write.table(as.matrix(seurat_obj[["RNA"]]$counts),
+            file="data/iAMP21/input_iAMP21/count_matrix.txt",
+            sep="\t",quote=FALSE,row.names=TRUE)
+
+#Save Seurat object
+saveRDS(seurat_obj, file="data/iAMP21/seurat_obj.RDS")
+
+```
+

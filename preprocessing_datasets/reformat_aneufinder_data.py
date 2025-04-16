@@ -65,14 +65,54 @@ def createPseudobulkWGS(wgs_dict):
     df = df.sort_values(by=["chr","start"],key=natsort_keygen())
     return(df)
 
-#Process the Aneufinder results for the different cell lines
+##Process the Aneufinder results for the HCT116 dataset
+#print("Processing HCT116 DNTRseq dataset")
+#fin=gzip.open("data/HCT116_DNTRseq/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
+#bed_dict=createDictionaryFromBed(fin)
+#filtered_dict=filterDictionary(bed_dict)
+##Delete object not longer used
+#del bed_dict
+#wgs_df = createPseudobulkWGS(filtered_dict)
+#wgs_df.to_csv("data/HCT116_DNTRseq/aneufinder_results/wgs_results_formated.csv")
+
+##Process the Aneufinder results for the A375 dataset
+#print("Processing A375 DNTRseq dataset")
+#fin=gzip.open("data/A375_DNTRseq/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
+#bed_dict=createDictionaryFromBed(fin)
+#filtered_dict=filterDictionary(bed_dict)
+##Delete object not longer used
+#del bed_dict
+#wgs_df = createPseudobulkWGS(filtered_dict)
+#wgs_df.to_csv("data/A375_DNTRseq/aneufinder_results/wgs_results_formated.csv")
+
+#Process the Aneufinder results for the A375 dataset
+print("Processing mouse dataset")
+fin=gzip.open("data/mouse_UMCG/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
+bed_dict=createDictionaryFromBed(fin)
+filtered_dict=filterDictionary(bed_dict)
+#Delete object not longer used
+del bed_dict
+wgs_df = createPseudobulkWGS(filtered_dict)
+wgs_df.to_csv("data/mouse_UMCG/aneufinder_results/wgs_results_formated.csv")
+
+##Process the Aneufinder results for the iAMP21 dataset
+#print("Processing iAMP dataset (ALL)")
+#fin=gzip.open("data/iAMP21/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
+#bed_dict=createDictionaryFromBed(fin)
+#filtered_dict=filterDictionary(bed_dict)
+##Delete object not longer used
+#del bed_dict
+#wgs_df = createPseudobulkWGS(filtered_dict)
+#wgs_df.to_csv("data/iAMP21/aneufinder_results/wgs_results_formated.csv")
+
+##Process the Aneufinder results for the different gastric cell lines
 #for cell_line in ["NCIN87","MKN45","NUGC4","SNU638"]:
-for cell_line in ["KATOIII","SNU16","SNU668","HGC27"]:
-    print("Processing "+cell_line)
-    fin=gzip.open("data/gastric_cell_lines/"+cell_line+"/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
-    bed_dict=createDictionaryFromBed(fin)
-    filtered_dict=filterDictionary(bed_dict)
-    #Delete object not longer used
-    del bed_dict
-    wgs_df = createPseudobulkWGS(filtered_dict)
-    wgs_df.to_csv("data/gastric_cell_lines/"+cell_line+"/aneufinder_results/wgs_results_formated.csv")
+#for cell_line in ["KATOIII","SNU16","SNU668","HGC27"]:
+#    print("Processing "+cell_line)
+#    fin=gzip.open("data/gastric_cell_lines/"+cell_line+"/aneufinder_results/binsize_1e+05_stepsize_1e+05_CNV.bed.gz")
+#    bed_dict=createDictionaryFromBed(fin)
+#    filtered_dict=filterDictionary(bed_dict)
+#    #Delete object not longer used
+#    del bed_dict
+#    wgs_df = createPseudobulkWGS(filtered_dict)
+#    wgs_df.to_csv("data/gastric_cell_lines/"+cell_line+"/aneufinder_results/wgs_results_formated.csv")

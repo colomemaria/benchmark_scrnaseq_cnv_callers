@@ -1,0 +1,262 @@
+---
+title: "Preprocessing of mouse T-cell lymphoma"
+author: "Katharina Schmid"
+date: "2025-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+knitr::opts_knit$set(root.dir = "..")
+
+library(Seurat)
+library(data.table)
+library(Matrix)
+library(ggplot2)
+```
+
+Data from UMCG (Floris and Andréa). Sample from the Thyme, should contain mostly T cells and a small fraction from B cells that
+should be filtered out with the respective markers, also suggested by Andréa.
+
+Then an euploid cancer sample is added additionally as a negative reference for the CNV callers. 
+
+## Tumor data from aneuploid mouse
+
+### Create Seurat object, quality control & filtering
+
+```{r}
+
+counts<-readRDS("data/mouse_UMCG/RNA_T989_SeekGene/T989_count_matrix.rds")
+
+#Create a Seurat object
+seurat_obj <- CreateSeuratObject(counts=counts,min.cells=3,min.features=200)
+
+seurat_obj
+
+```
+
+```{r}
+
+#Calculate the percentage of mitochondrial counts
+seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^mt-")
+VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,
+        layer="count")
+
+```
+
+```{r}
+plot1 <- FeatureScatter(seurat_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(seurat_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+```{r}
+ggplot(seurat_obj@meta.data,aes(x=nCount_RNA))+
+  geom_histogram(bins=50)
+
+ggplot(seurat_obj@meta.data,aes(x=nFeature_RNA))+
+  #geom_vline(xintercept=500)+
+  geom_histogram(bins=50)
+
+```
+
+```{r}
+
+seurat_obj <- subset(seurat_obj, subset = percent.mt < 20 & nCount_RNA > 1000)
+seurat_obj
+
+```
+
+
+```{r}
+ggplot(seurat_obj@meta.data,aes(x=nCount_RNA))+
+  geom_histogram()+
+  geom_vline(xintercept=1000)
+
+# ggplot(seurat_obj@meta.data,aes(x=nFeature_RNA))+
+#   geom_histogram(bins=50)
+
+```
+
+### Normalize data
+
+```{r}
+
+seurat_obj<-NormalizeData(seurat_obj,normalization.method = "LogNormalize",
+                          scale.factor=10000)
+
+
+```
+
+### Identify highly variable features
+
+```{r,fig.height=4,fig.width=10}
+
+seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat_obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+```
+
+## PCA
+
+```{r}
+
+#Scale the data
+all.genes <- rownames(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj, features = all.genes)
+
+seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(object = seurat_obj),
+                     verbose=FALSE)
+DimPlot(seurat_obj, reduction = "pca")
+
+```
+```{r}
+ElbowPlot(seurat_obj)
+```
+
+## Find clusters
+
+```{r}
+seurat_obj <- FindNeighbors(seurat_obj, dims = 1:15)
+seurat_obj <- FindClusters(seurat_obj, resolution = 1)
+```
+## Plot UMAP
+
+```{r}
+
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:10)
+DimPlot(seurat_obj, reduction = "umap")
+
+```
+Show coverage:
+
+```{r}
+FeaturePlot(seurat_obj, features = c("nCount_RNA"))
+```
+
+## Annotate clusters based on marker genes
+
+Cd3e for T cells
+
+Cd74 & Itgax for B cells
+
+```{r}
+#GATA2 and FCER1A not expressed high enough in our dataset
+used_marker_genes <- c("Cd3e", "Cd74","Itgax")
+VlnPlot(seurat_obj, features = used_marker_genes)
+
+FeaturePlot(seurat_obj, features = used_marker_genes)
+
+```
+
+```{r}
+
+new.cluster.ids <- rep("T_cells", 11)
+new.cluster.ids[12]<-"B_cells"
+names(new.cluster.ids) <- levels(seurat_obj)
+seurat_obj <- RenameIdents(seurat_obj, new.cluster.ids)
+DimPlot(seurat_obj, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+```
+
+```{r}
+
+used_marker_genes <- c("Cd3e", "Cd74","Itgax")
+
+VlnPlot(seurat_obj, features = used_marker_genes)
+
+```
+
+## Tumor data from euploid mouse
+
+Also filter and 
+
+```{r}
+
+counts_ep<-readRDS("data/mouse_UMCG/euploid_cancer_reference/eT_count_matrix.rds")
+
+#Create a Seurat object
+seurat_obj_ref <- CreateSeuratObject(counts=counts_ep,min.cells=3,min.features=200)
+
+seurat_obj_ref
+
+```
+```{r}
+
+#Calculate the percentage of mitochondrial counts
+seurat_obj_ref[["percent.mt"]] <- PercentageFeatureSet(seurat_obj_ref, pattern = "^mt-")
+VlnPlot(seurat_obj_ref, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,
+        layer="count")
+
+```
+
+```{r}
+plot1 <- FeatureScatter(seurat_obj_ref, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(seurat_obj_ref, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+```{r}
+ggplot(seurat_obj_ref@meta.data,aes(x=nCount_RNA))+
+  geom_vline(xintercept=1000)+
+  geom_histogram(bins=50)
+
+ggplot(seurat_obj_ref@meta.data,aes(x=nFeature_RNA))+
+  #geom_vline(xintercept=500)+
+  geom_histogram(bins=50)
+
+```
+
+
+```{r}
+seurat_obj_ref <- subset(seurat_obj_ref, subset = percent.mt < 20 & nCount_RNA > 1000)
+seurat_obj_ref
+
+```
+
+## Combine both to one large count matrix for the CNV RNA callers
+
+
+```{r}
+
+#Extract the Seurat count matrices
+counts_tumor<-as.matrix(seurat_obj[["RNA"]]$counts)
+counts_ref<-as.matrix(seurat_obj_ref[["RNA"]]$counts)
+
+#Find common gene set
+common_genes<-intersect(rownames(counts_ref),rownames(counts_tumor))
+print(paste("Identified",length(common_genes),"common genes!"))
+
+#Filter and combine both
+counts_tumor<-counts_tumor[common_genes,]
+counts_ref<-counts_ref[common_genes,]
+counts_combined<-cbind(counts_tumor,counts_ref)
+
+#Save sample annotation
+sample_annot<-data.frame(barcode=colnames(counts_combined),
+                         sample=c(rep("mouse",ncol(counts_tumor)),
+                                  rep("ref",ncol(counts_ref))))
+
+
+write.table(sample_annot, file="data/mouse_UMCG/input_mouse/sample_annotation.txt",
+            sep="\t",quote=FALSE,row.names=FALSE,col.names=FALSE)
+
+
+df_refs<-data.frame(ref_groups=setdiff(unique(sample_annot$sample),"mouse"))
+write.table(df_refs, file="data/mouse_UMCG/input_mouse/ref_groups.txt",
+            sep="\t",quote=FALSE,row.names=FALSE,col.names=TRUE)
+
+#Save the reduced count matrix
+write.table(counts_combined,
+            file="data/mouse_UMCG/input_mouse/count_matrix.txt",
+            sep="\t",quote=FALSE,row.names=TRUE)
+
+```
+
