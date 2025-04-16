@@ -1,0 +1,1189 @@
+---
+title: "Benchmarking - revision"
+author: "Katharina Schmid"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = 'snakemake_pipeline')
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(ggpubr)
+library(ggdendro)
+library(RColorBrewer)
+library(knitr)
+library(GenomicRanges)
+
+theme_set(theme_bw())
+```
+
+# Reviewer 1
+
+```{r}
+
+all_evals<-fread("results/all_metrics_datasets_combined.tsv")
+
+```
+
+### Compare general performance between methods
+
+Wilcoxon rank signed test
+
+Compare also the mean deviation between methods for each datasets
+
+Small check: how big is the difference between the mean and the median:
+
+```{r}
+eval_mean<-all_evals%>%
+  filter(metric=="max_f1")%>%
+  group_by(method)%>%
+  summarize(mean=mean(value),median=median(value))
+
+print("Ordered by mean")
+kable(eval_mean[order(eval_mean$mean),])
+
+print("Ordered by median")
+kable(eval_mean[order(eval_mean$median),])
+```
+
+
+### Compare gains vs losses sensitivity
+
+```{r,fig.width=9,fig.height=6}
+eval_sens<-all_evals[all_evals$metric %in% c("sens_gains_f1","sens_losses_f1"),]
+
+#Remove one dataset without losses
+eval_sens<-eval_sens[eval_sens$dataset!="SNU16",]
+
+eval_pvals<-NULL
+for(meth in unique(eval_sens$method)){
+  wtest<-wilcox.test(with(eval_sens,value[method==meth & metric=="sens_gains_f1"]),
+                     with(eval_sens,value[method==meth & metric=="sens_losses_f1"]),
+                     alternative="greater",paired=TRUE)
+  
+  eval_pvals<-rbind(eval_pvals,
+                    data.frame(method=meth,
+                               p=wtest$p.value))
+}
+
+eval_pvals$fdr<-paste0("p.adj = ",round(p.adjust(eval_pvals$p,method="BH"),3))
+eval_pvals$y.position<-1.07
+eval_pvals$group1<-"Sensitivity (gain)"
+eval_pvals$group2<-"Sensitivity (loss)"
+
+metric_names<-setNames(c("Sensitivity (gain)","Sensitivity (loss)"),
+         c("sens_gains_f1","sens_losses_f1"))
+eval_sens$metric<-metric_names[as.character(eval_sens$metric)]
+
+g<-ggplot(eval_sens,aes(x=metric,y=value,color=metric))+
+  geom_violin()+
+  geom_jitter()+#position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),
+              #size = 1, alpha = 0.6)+
+  stat_pvalue_manual(eval_pvals,label="fdr",tip.length=0.05)+
+  ylim(0,1.15)+
+  scale_color_discrete("CNV type",labels=c("Gain","Loss"))+
+  xlab("Method")+ylab("Sensitivity")+
+  facet_wrap(~method,ncol=5)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1,size=10))
+
+print(g)
+ggsave(g,file="../figure_plots/supp_fig_gain_vs_loss.png")
+
+#kable(eval_pvals)
+
+```
+
+## Compare the RMSE values
+
+First, we establish that the RMSE are normal distributed, so that we can use a paired T-test instead of Wilcoxon Rank Signed test. The T-test is more powerful!
+
+### Test for normality
+
+```{r}
+
+#Load RMSE results for the different references
+mse_perf1<-fread("results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf1$metric<-"tcell_cr1"
+
+print("Shapiro-Wilk test for T cells (CellRanger v1)")
+shapiro.test(mse_perf1$rmse)
+
+mse_perf2<-fread("results/output_pbmc_ext_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf2$metric<-"tcell_cr7"
+
+print("Shapiro-Wilk test for T cells (CellRanger v7)")
+shapiro.test(mse_perf2$rmse)
+
+mse_perf3<-fread("results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf3$metric<-"mono_cr1"
+
+print("Shapiro-Wilk test for Monocytes (CellRanger v1)")
+shapiro.test(mse_perf3$rmse)
+
+mse_perf4<-fread("results/output_pbmc_ext_mono_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf4$metric<-"mono_cr7"
+
+print("Shapiro-Wilk test for Monocytes (CellRanger v7)")
+shapiro.test(mse_perf4$rmse)
+
+mse_perf<-rbind(mse_perf1,mse_perf2,mse_perf3,mse_perf4)
+
+ggplot(mse_perf,aes(sample=rmse))+
+  stat_qq()+
+  stat_qq_line(color="darkred",linetype="dashed")+
+  facet_wrap(~metric)
+
+```
+
+### Paired T-test
+
+```{r}
+
+#Check that both data frames are ordered correctly
+#all(mse_perf1$method==mse_perf2$method)
+#all(mse_perf3$method==mse_perf4$method)
+
+t.test(mse_perf1$rmse,mse_perf2$rmse,
+       alternative="greater",paired=TRUE)
+
+t.test(mse_perf3$rmse,mse_perf4$rmse,
+       alternative="greater",paired=TRUE)
+```
+
+## Compare whether the methods are more similar to each other than to the genomic ground truth
+
+We focus on testing Numbat(Expr) vs the other tools - with the rational that Numbat(Expr) was the best performing method.
+
+```{r}
+
+# ------------------------------------------------------------------------------
+# Read input data
+# ------------------------------------------------------------------------------
+
+dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII","iAMP21",
+                 "NUGC4","SNU638","SNU668","HGC27", "SNU16",
+                 "MCF7","COLO320","MM","BCC06","BCC06post")
+dataset_ending<-setNames(c("","","","",
+                           "","","","", "","",
+                           "","_cnvkit","_wes","_wes","_wes"),
+                         dataset_names)
+
+#Load the files
+all_corrs<-NULL
+for(dataset in dataset_names){
+  
+  corrs<-fread(paste0("results/output_",dataset,
+                      "/evaluation/evaluation_cnv_prediction_corr",
+                      dataset_ending[dataset],".tsv"))
+  corrs<-corrs[,c("method1","method2","pearson")]
+  
+  #Get also the swapped entries for a complete analysis
+  corrs_swapped<-corrs[corrs$method1 != corrs$method2,]
+  corrs_swapped$method3<-corrs_swapped$method1
+  corrs_swapped$method1<-corrs_swapped$method2
+  corrs_swapped$method2<-corrs_swapped$method3
+  corrs_swapped$method3<-NULL
+  
+  corrs<-rbind(corrs,corrs_swapped)
+  corrs$dataset<-dataset
+  all_corrs<-rbind(all_corrs,corrs)
+}
+
+#Unify WGS and WES
+all_corrs$method1[all_corrs$method1 %in% c("WGS","WES")]<-"genomics"
+all_corrs$method2[all_corrs$method2 %in% c("WGS","WES")]<-"genomics"
+
+# ------------------------------------------------------------------------------
+# Perform Wilcoxon rank signed test for each Numbat (Expr) against each method
+# ------------------------------------------------------------------------------
+
+#Focus on Numbat expression
+all_corrs<-all_corrs[all_corrs$method1=="Numbat (Expr)"]
+
+corr_genomic<-all_corrs[all_corrs$method2=="genomics",]
+
+eval_pvals<-NULL
+for(meth in setdiff(all_corrs$method2,c("Numbat (Expr)","genomics"))){
+  corrs_method<-all_corrs[all_corrs$method2==meth,]
+  
+  #Check that they are ordered always the same
+  #print(all(corrs_method$dataset==corr_genomic$dataset))
+  
+  wtest<-wilcox.test(corrs_method$pearson,
+                     corr_genomic$pearson,
+                     alternative="greater",paired=TRUE)
+  
+  eval_pvals<-rbind(eval_pvals,
+                      data.frame(method=meth,
+                                 pval=wtest$p.value))
+}
+
+eval_pvals$fdr<-p.adjust(eval_pvals$pval,method="BH")
+eval_pvals$sign<-eval_pvals$fdr<0.05
+eval_pvals$highly_sign<-eval_pvals$fdr<0.005
+kable(eval_pvals)
+
+```
+
+## Compare per cell results to pseudobulk
+
+Use a one sample Wilcoxon Test to compare whether the per cell results are
+significant different from the pseudobulk result.
+
+```{r}
+
+#Load per cell correlations
+res_cell<-fread("results/output_SNU601/evaluation/SNU601_evaluation_per_cell_results.tsv")
+res_cell$method[res_cell$method=="CopyKat"]<-"copyKat"
+
+res_complete<-all_evals[all_evals$dataset=="SNU601" & 
+                          all_evals$metric == "pearson",]
+
+eval_pvals<-NULL
+per_cell_devs<-NULL
+for(meth in res_complete$method){
+  
+  cell_corr_vals<-res_cell$cor[res_cell$method==meth]
+  pb_val<-res_complete$value[res_complete$method==meth]
+    
+  wtest<-wilcox.test(cell_corr_vals,
+              mu=pb_val,
+              alternative="less")
+  
+  eval_pvals<-rbind(eval_pvals,
+                      data.frame(method=meth,
+                                 pval=wtest$p.value))
+  
+  per_cell_devs<-rbind(per_cell_devs,
+                       data.frame(method=meth,
+                                  abs_dev=pb_val-cell_corr_vals))
+}
+
+eval_pvals$fdr<-p.adjust(eval_pvals$pval,method="BH")
+kable(eval_pvals)
+
+#Map whether it is a per cell estimate or a subclone estimate
+method_type<-setNames(c("subclone","cell","cell","cell",
+                 "subclone","cell","cell",
+                 "subclone","cell"),
+                 c("InferCNV (CNV)", "InferCNV (Expr)", "CaSpER", "copyKat", 
+               "SCEVAN (CNV)", "SCEVAN (Expr)", "Numbat (Expr)", 
+               "Numbat (CNV)", "CONICSmat"))
+
+per_cell_devs$method_type<-method_type[per_cell_devs$method]
+
+#Calculate the absolute deviation
+ggplot(per_cell_devs,aes(x=method,y=abs_dev,color=method_type))+
+  geom_boxplot()+
+  ylab("Absolute deviation from the pseudobulk correlation")+
+  xlab("Method")+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+
+```
+
+
+
+## Compare each reference dataset with the original chosen one
+
+### For the MM dataset
+
+```{r}
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+#Load the different result files
+dataset_names<-c("MM","MM_tcell","MM_bcell","MM_mono","MM_gastric","MM_SNU601")
+
+#Load the files
+ref_evals<-NULL
+for(dataset in dataset_names){
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1_wes.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"MM"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  ref_evals<-rbind(ref_evals,sensspecf1)
+  
+}
+
+ref_evals<-ref_evals[ref_evals$metric=="max_f1",]
+
+ref_summary<-ref_evals%>%
+  group_by(method)%>%
+  summarize(mean=mean(value),sd=sd(value))
+
+kable(ref_summary[order(ref_summary$sd),])
+
+#Compare each dataset to the ground truth
+eval_pvals<-NULL
+for(dt in c("MM_tcell","MM_bcell","MM_mono","MM_gastric","MM_SNU601")){
+
+  wtest<-wilcox.test(ref_evals$value[ref_evals$dataset=="MM"],
+                     ref_evals$value[ref_evals$dataset==dt],
+                     alternative="greater",paired=TRUE)
+
+  eval_pvals<-rbind(eval_pvals,
+                      data.frame(ref=dt,
+                                 pval=wtest$p.value))
+}
+
+eval_pvals$fdr<-p.adjust(eval_pvals$pval,method="BH")
+kable(eval_pvals)
+
+ggplot(ref_evals,aes(x=dataset,y=value))+
+  geom_violin()+geom_point(aes(color=method))
+
+```
+
+### For the SNU601 dataset
+
+```{r}
+
+#Load the different result files
+dataset_names<-c("SNU601","SNU601_epiendo","SNU601_fibsom", "SNU601_immune","SNU601_MM")
+
+#Load the files
+ref_evals<-NULL
+for(dataset in dataset_names){
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"MM"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  ref_evals<-rbind(ref_evals,sensspecf1)
+  
+}
+
+ref_evals<-ref_evals[ref_evals$metric=="max_f1",]
+
+ref_summary<-ref_evals%>%
+  group_by(method)%>%
+  summarize(mean=mean(value),sd=sd(value))
+
+kable(ref_summary[order(ref_summary$sd),])
+
+#Compare each dataset to the ground truth
+eval_pvals<-NULL
+for(dt in c("SNU601_epiendo","SNU601_fibsom", "SNU601_immune","SNU601_MM")){
+
+  wtest<-wilcox.test(ref_evals$value[ref_evals$dataset=="SNU601"],
+                     ref_evals$value[ref_evals$dataset==dt],
+                     alternative="greater",paired=TRUE)
+
+  eval_pvals<-rbind(eval_pvals,
+                      data.frame(ref=dt,
+                                 pval=wtest$p.value))
+}
+
+eval_pvals$fdr<-p.adjust(eval_pvals$pval,method="BH")
+kable(eval_pvals)
+
+ggplot(ref_evals,aes(x=dataset,y=value))+
+  geom_violin()+geom_point(aes(color=method))
+
+```
+
+# Reviewer 2
+
+## All the new datasets
+
+```{r, fig.width=12,fig.height=8}
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+new_dataset<-c("iAMP21","mouse","HCT116","A375","ALL1","ALL2")
+eval_name<-setNames(c("","_mouse","_smartseq",
+                      "_smartseq","_smartseq_expr","_smartseq_expr2"),new_dataset)
+
+new_evals<-NULL
+for(dataset in new_dataset){
+  
+  
+  corrs<-fread(paste0("results/output_",dataset,
+                      "/evaluation",eval_name[dataset],
+                      "/evaluation_cnv_prediction_corr",".tsv"))
+  
+  #Filter for comparison with ground truth
+  corrs<-corrs[corrs$method1 %in% c("scWGS","WGS","WES","GATK")]
+  corrs<-corrs[,c("method2","pearson")]
+  colnames(corrs)<-c("method","value")
+  corrs$metric<-"pearson"
+  corrs$dataset<-dataset
+  
+  #Set negative correlation values to 0
+  corrs$norm_value<-corrs$value
+  corrs$norm_value[corrs$norm_value<0]<-0
+  
+  #Remove row with scWGS/WES/WGS results
+  corrs<-corrs[! corrs$method %in% c("scWGS","WGS","WES","GATK"),]
+  new_evals<-rbind(new_evals,corrs)
+  
+  #Add also AUC values (separate values for gain and loss)
+  auc<-fread(paste0("results/output_",dataset,
+                    "/evaluation",eval_name[dataset],
+                    "/evaluation_cnv_prediction_auc.txt"))
+  auc$method<-method_names[auc$method]
+  
+  #Get standard AUC values
+  auc_basic<-melt(auc[,c("method","auc_gains","auc_losses")],id.vars="method")
+  auc_basic<-auc_basic[,c("method","value","variable")]
+  colnames(auc_basic)[3]<-"metric"
+  auc_basic$dataset<-dataset
+  
+  #Scale AUC to also range from 0-1 (set value < 0.5 to 0)
+  auc_basic$norm_value<-auc_basic$value
+  auc_basic$norm_value<-(auc_basic$norm_value-0.5)*2
+  auc_basic$norm_value[auc_basic$norm_value<0]<-0
+  
+  new_evals<-rbind(new_evals,auc_basic)
+  
+  #Get AUPRC and truncated AUC values
+  auc_others<-melt(auc[,c("method","auc_gains_trunc","aucpr_gains",
+                          "auc_losses_trunc","aucpr_losses")],id.vars="method")
+  auc_others<-auc_others[,c("method","value","variable")]
+  colnames(auc_others)[3]<-"metric"
+  auc_others$dataset<-dataset
+  auc_others$norm_value<-auc_others$value
+  new_evals<-rbind(new_evals,auc_others) 
+
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation",eval_name[dataset],
+                   "/evaluation_cnv_prediction_f1.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  new_evals<-rbind(new_evals,sensspecf1)
+  
+}
+
+#Check first for the correlation (remove here the iAMP21 to not have it in there twice)
+old_evals<-all_evals%>%
+  filter(dataset != "iAMP21")%>%
+  filter(metric %in% c("pearson","max_f1","auc_gains_trunc","auc_losses_trunc"))%>%
+  group_by(metric,method)%>%
+  summarize(mean_value=mean(value,na.rm=TRUE),sd_value=sd(value,na.rm=TRUE))
+
+old_evals$dataset<-"old_datasets"
+
+new_evals<-new_evals[new_evals$metric %in% c("pearson","max_f1","auc_gains_trunc","auc_losses_trunc"),]
+new_evals$norm_value<-NULL
+new_evals$sd_value<-0
+colnames(new_evals)[2]<-"mean_value"
+
+new_evals<-new_evals[,colnames(old_evals),with=FALSE]
+
+plot_evals<-rbind(old_evals,new_evals)
+
+rename_metrics<-setNames(
+         c("Max F1 Score","Pearson corr","Trunc AUC (gains)","Trunc AUC (losses)"),
+         c("max_f1","pearson","auc_gains_trunc","auc_losses_trunc"))
+plot_evals$metric<-rename_metrics[plot_evals$metric]
+plot_evals$metric<-factor(plot_evals$metric,levels=rename_metrics)
+
+ggplot(plot_evals,aes(x=method,y=mean_value,fill=dataset))+
+  geom_bar(stat="identity",position="dodge")+
+  geom_errorbar(aes(x=method,ymin=mean_value-sd_value,ymax=mean_value+sd_value,fill=dataset),
+                position=position_dodge(width=0.9), width=0.2)+
+  facet_wrap(~metric,ncol=1)+
+  xlab("Method")+ylab("Performance")
+
+```
+
+Show that there are no differences between cell lines and primary samples
+
+```{r, fig.width=12,fig.height=8}
+
+old_evals_detailed<-all_evals%>%
+  filter(dataset != "iAMP21")%>%
+  filter(metric %in% c("pearson","max_f1","auc_gains_trunc","auc_losses_trunc"))
+old_evals_detailed$norm_value<-NULL
+
+new_evals$sd_value<-NULL
+colnames(new_evals)[3]<-"value"
+old_evals_detailed<-old_evals_detailed[,colnames(new_evals),with=FALSE]
+
+combined_evals<-rbind(old_evals_detailed,new_evals)
+
+#Differentiate between cell lines and primary samples
+combined_evals$data_type<-ifelse(combined_evals$dataset %in% c("MM","mouse","BCC06","BCC06post","iAMP21","ALL1","ALL2"),
+                                 "primary","cell_line")
+
+rename_metrics<-setNames(
+         c("Max F1 Score","Pearson corr","Trunc AUC (gains)","Trunc AUC (losses)"),
+         c("max_f1","pearson","auc_gains_trunc","auc_losses_trunc"))
+combined_evals$metric<-rename_metrics[combined_evals$metric]
+combined_evals$metric<-factor(combined_evals$metric,levels=rename_metrics)
+
+ggplot(combined_evals,aes(x=method,y=value,fill=data_type))+
+  geom_violin()+
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),
+              size = 1, alpha = 0.6)+
+  facet_wrap(~metric,ncol=1)+
+  xlab("Method")+ylab("Performance")
+
+
+#Test for the max F1 scores whether there are significant differences
+combined_evals_f1<-combined_evals[combined_evals$metric=="Max F1 Score",]
+eval_pvals<-NULL
+for(meth in unique(combined_evals_f1$method)){
+
+
+  wtest<-wilcox.test(with(combined_evals_f1,value[method==meth & data_type=="cell_line"]),
+                     with(combined_evals_f1,value[method==meth & data_type=="primary"]),
+                     alternative="two.sided",paired=FALSE)
+  
+  eval_pvals<-rbind(eval_pvals,
+                    data.frame(method=meth,
+                               p=wtest$p.value))
+}
+eval_pvals$fdr<-p.adjust(eval_pvals$p,method="BH")
+eval_pvals$signif<-eval_pvals$fdr < 0.05
+kable(eval_pvals)
+```
+
+## Focal vs global CNVs
+
+Focal CNVs are not uniquely defined, but taking here the definition
+that focal CNVs are less than 3MB following the publication of 
+https://www.sciencedirect.com/science/article/pii/S0167488914003000
+
+This is followed by the question, how to do an evaluation not on a per-bin
+approach, but on larger segment???
+
+First idea: take the gain / loss thresholds from the F1 score and classify
+all 
+
+
+```{r}
+
+define_colors<-c('#d60000', '#8c3bff', '#018700', '#00acc6', '#97ff00', '#ff7ed1',
+                 '#6b004f', '#ffa52f', '#573b00', '#005659', '#0000dd', '#00fdcf',
+                 '#a17569', '#bcb6ff', '#95b577', '#bf03b8', '#645474', '#790000',
+                 '#0774d8', '#fdf490')
+
+# ------------------------------------------------------------------------------
+# Visualize focal CNVs across datasets
+# ------------------------------------------------------------------------------
+
+#Part 1: the number of focal CNVs and their coverage
+dists<-fread("results/focal_cnvs_distribution.tsv")
+
+#Plot the filtered results
+dists_filtered<-dists[,c("dataset","all_gains_unfiltered", "all_losses_unfiltered", "focal1_gains_unfiltered", "focal1_losses_unfiltered",
+                         "focal2_gains", "focal2_losses","focal3_gains","focal3_losses")]
+dists_filtered<-melt(dists_filtered,id.vars=c("dataset"))
+dists_filtered$type<-gsub("_.*","",dists_filtered$variable)
+dists_filtered$cnv<-gsub("_unfiltered","",dists_filtered$variable)
+dists_filtered$cnv<-gsub(".*_","",dists_filtered$cnv)
+
+focal_names<-setNames(c("All CNVs","Focal type 1","Focal type 2","Focal type 3"),
+         c("all","focal1","focal2","focal3"))
+dists_filtered$type<-focal_names[dists_filtered$type]
+dists_filtered$cnv<-ifelse(dists_filtered$cnv == "gains","Gain","Loss")
+  
+  
+g.1<-ggplot(dists_filtered,aes(x=type,y=value))+
+  geom_violin()+
+  geom_jitter(aes(color=dataset))+
+  scale_color_manual("Dataset",values=define_colors)+
+  xlab("CNV Type")+ylab("Number of CNVs")+
+  facet_wrap(~cnv)+
+  theme(axis.text.x=element_text(angle=55,vjust=1,hjust=1))
+
+# ------------------------------------------------------------------------------
+# Check the percentages, how many of all overlap the expression data 
+# and how many of the focal 1
+# ------------------------------------------------------------------------------
+
+dists$overlap_broad_gains<-round((dists$all_gains - dists$focal1_gains) / 
+                                   (dists$all_gains_unfiltered - dists$focal1_gains_unfiltered),3)
+dists$overlap_broad_losses<-round((dists$all_losses - dists$focal1_losses) / 
+                                    (dists$all_losses_unfiltered - dists$focal1_losses_unfiltered),3)
+dists$overlap_focal1_gains<-round(dists$focal1_gains / dists$focal1_gains_unfiltered,3)
+dists$overlap_focal1_losses<-round(dists$focal1_losses / dists$focal1_losses_unfiltered,3)
+
+overlap_plot<-dists[,c("dataset","overlap_broad_gains","overlap_broad_losses",
+                       "overlap_focal1_gains","overlap_focal1_losses")]
+overlap_plot<-melt(overlap_plot,id.vars="dataset")
+overlap_plot$variable<-gsub("overlap_","",overlap_plot$variable)
+
+focal_names<-setNames(c("Broad gains","Broad losses","Focal type 1 gains","Focal type 1 losses"),
+         c("broad_gains","broad_losses","focal1_gains","focal1_losses"))
+overlap_plot$variable<-focal_names[overlap_plot$variable]
+
+g.2<-ggplot(overlap_plot,aes(x=variable,y=value))+
+  geom_violin()+geom_jitter(aes(color=dataset))+
+  scale_color_manual("Dataset",values=define_colors)+
+  xlab("CNV Type")+
+  ylab("Percentage of CNVs\noverlapping with scRNAseq results")+
+  theme(axis.text.x=element_text(angle=55,vjust=1,hjust=1))
+
+# ------------------------------------------------------------------------------
+# Performance for the different methods
+# ------------------------------------------------------------------------------
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+#Part 2: the performance of the focal CNVs
+eval1<-fread("results/focal_definition1_cnvs_evaluation.tsv")
+eval1$focal_type<-"focal1"
+eval2<-fread("results/focal_definition2_cnvs_evaluation.tsv")
+eval2$focal_type<-"focal2"
+eval3<-fread("results/focal_definition3_cnvs_evaluation.tsv")
+eval3$focal_type<-"focal3"
+
+eval<-rbind(eval1,eval2,eval3)
+eval<-melt(eval,id.vars=c("dataset","method","focal_type"))
+
+#Convert method names
+eval$method<-method_names[eval$method]
+
+#Combine it with the general results
+eval_all_cnvs<-all_evals[all_evals$metric %in% c("sens_gains_f1","sens_losses_f1"),]
+eval_all_cnvs$focal_type<-"all_cnvs"
+eval_all_cnvs<-eval_all_cnvs[,c("dataset","method","focal_type","metric","value")]
+
+#Select for datasets that I tested in the focal analysis
+eval_all_cnvs<-eval_all_cnvs[eval_all_cnvs$dataset %in% unique(eval$dataset),]
+
+metric_names<-setNames(c("sens_gains","sens_losses"),
+                       c("sens_gains_f1","sens_losses_f1"))
+eval_all_cnvs$metric<-metric_names[as.character(eval_all_cnvs$metric)]
+
+colnames(eval_all_cnvs)<-colnames(eval)
+eval<-rbind(eval,eval_all_cnvs)
+
+#Rename facet title
+metric_nice<-setNames(c("Sensitivity (gains)","Sensitivity (losses)"),
+                      c("sens_gains","sens_losses"))
+eval$variable<-metric_nice[eval$variable]
+
+g.3<-ggplot(eval,aes(x=method,y=value,color=focal_type))+
+  geom_boxplot()+
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),
+              size = 1, alpha = 0.6)+
+  scale_color_discrete("CNV type", labels=c("All CNVs","Focal type 1",
+                                              "Focal type 2","Focal type 3"))+
+  xlab("Method")+ylab("Metric")+
+  facet_wrap(~variable,nrow=2)
+  
+```
+
+```{r, fig.width=12,fig.height=9}
+g.top<-ggarrange(g.1,g.2,common.legend = TRUE, labels=LETTERS[1:2],align="hv",
+                 legend="bottom",ncol=2,widths=c(0.6,0.3))
+
+g<-ggarrange(g.top,g.3,ncol=1,labels=c("",LETTERS[3]))
+print(g)
+
+ggsave(g,file="../figure_plots/supp_figure_performance_focal.png")
+```
+
+## Per cell evalution vs pseudobulk evaluation
+
+### Combined plot with correlations for all four cell lines
+
+```{r,fig.width=10,fig.height=18}
+
+# ------------------------------------------------------------------------------
+# HCT116
+# ------------------------------------------------------------------------------
+
+cell_eval<-fread("results/output_HCT116/evaluation_smartseq/HCT116_evaluation_per_cell_paired_results.tsv")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_HCT116/evaluation_smartseq/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g.1<-ggplot(cell_eval,aes(x=cor,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="none")+
+  ggtitle("HCT116")
+
+# ------------------------------------------------------------------------------
+# A375
+# ------------------------------------------------------------------------------
+
+cell_eval<-fread("results/output_A375/evaluation_smartseq/A375_evaluation_per_cell_paired_results.tsv")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_A375/evaluation_smartseq/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g.2<-ggplot(cell_eval,aes(x=cor,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="none")+
+  ggtitle("A375")
+
+# ------------------------------------------------------------------------------
+# ALL1
+# ------------------------------------------------------------------------------
+
+cell_eval<-fread("results/output_ALL1/evaluation_smartseq_expr/ALL1_evaluation_per_cell_paired_results.tsv")
+
+#Get the clonal annotation of each
+annot<-fread("data/ALL_samples_DNTRseq/ALL1-clones_final.txt")
+
+#Match DNA and RNA names
+annot$rna_index<-gsub("D","R",annot$dna_library_id)
+annot$rna_index<-gsub("_","-",annot$rna_index)
+
+#Combine both
+cell_eval<-merge(cell_eval,annot[,c("rna_index","clone")],by.x="cells",by.y="rna_index")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_ALL1/evaluation_smartseq_expr/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+
+#Rename clone names
+cell_eval$clone<-ifelse(cell_eval$clone=="3_1","clone 1","clone 2")
+#Create a plot with correlation values
+g.3<-ggplot(cell_eval,aes(x=cor,fill=clone))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="bottom")+
+  ggtitle("ALL1")
+
+
+# ------------------------------------------------------------------------------
+# ALL2
+# ------------------------------------------------------------------------------
+
+cell_eval<-fread("results/output_ALL2/evaluation_smartseq_expr2/ALL2_evaluation_per_cell_paired_results.tsv")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_ALL2/evaluation_smartseq_expr2/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g.4<-ggplot(cell_eval,aes(x=cor,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1.01)+
+  theme(legend.position="none")+
+  ggtitle("ALL2")
+
+# ------------------------------------------------------------------------------
+# Combined
+# ------------------------------------------------------------------------------
+
+g<-ggarrange(g.1,g.2,g.3,g.4,labels=LETTERS[1:4],ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/supp_figure_DNTRseq_percell_performance.png")
+
+```
+
+
+### For the HCT116 cell line
+
+For correlation, AUC truncated gain and loss
+
+```{r}
+
+cell_eval<-fread("results/output_HCT116/evaluation_smartseq/HCT116_evaluation_per_cell_paired_results.tsv")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_HCT116/evaluation_smartseq/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g.1<-ggplot(cell_eval,aes(x=cor,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="none")+
+  ggtitle("HCT116")
+
+print(g.1)
+
+
+```
+
+
+```{r}
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_HCT116/evaluation_smartseq/evaluation_cnv_prediction_auc.txt")
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "CopyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+  
+pb_eval$method<-method_names[pb_eval$method]
+
+#Create a plot with correlation values
+g<-ggplot(cell_eval,aes(x=auc_trunc_gain,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=auc_gains_trunc))+
+  facet_wrap(~method)+
+  xlim(0,1)+
+  theme(legend.position="none")
+
+print(g)
+
+
+#Create a plot with correlation values
+g<-ggplot(cell_eval,aes(x=auc_trunc_loss,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=auc_losses_trunc))+
+  facet_wrap(~method)+
+  xlim(0,1)+
+  theme(legend.position="none")
+
+print(g)
+
+```
+
+### For the A375 cell line
+
+For correlation, AUC truncated gain and loss
+
+```{r}
+
+cell_eval<-fread("results/output_A375/evaluation_smartseq/A375_evaluation_per_cell_paired_results.tsv")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_A375/evaluation_smartseq/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g.2<-ggplot(cell_eval,aes(x=cor,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="none")+
+  ggtitle("A375")
+
+print(g.2)
+
+```
+
+
+```{r}
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_A375/evaluation_smartseq/evaluation_cnv_prediction_auc.txt")
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "CopyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+  
+pb_eval$method<-method_names[pb_eval$method]
+
+#Create a plot with correlation values
+g<-ggplot(cell_eval,aes(x=auc_trunc_gain,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=auc_gains_trunc))+
+  facet_wrap(~method)+
+  xlim(0,1)+
+  theme(legend.position="none")
+
+print(g)
+
+
+#Create a plot with correlation values
+g<-ggplot(cell_eval,aes(x=auc_trunc_loss,fill=method))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=auc_losses_trunc))+
+  facet_wrap(~method)+
+  xlim(0,1)+
+  theme(legend.position="none")
+
+print(g)
+
+```
+
+
+### For the ALL1 cell line
+
+```{r}
+
+cell_eval<-fread("results/output_ALL1/evaluation_smartseq_expr/ALL1_evaluation_per_cell_paired_results.tsv")
+
+#Get the clonal annotation of each
+annot<-fread("data/ALL_samples_DNTRseq/ALL1-clones_final.txt")
+
+#Match DNA and RNA names
+annot$rna_index<-gsub("D","R",annot$dna_library_id)
+annot$rna_index<-gsub("_","-",annot$rna_index)
+
+#Combine both
+cell_eval<-merge(cell_eval,annot[,c("rna_index","clone")],by.x="cells",by.y="rna_index")
+
+#Read the pseudobulk values
+pb_eval<-fread("results/output_ALL1/evaluation_smartseq_expr/evaluation_cnv_prediction_corr.tsv")
+pb_eval<-pb_eval[pb_eval$method1 == "WGS" & pb_eval$method2 != "WGS",]
+pb_eval$method1<-NULL
+colnames(pb_eval)[1]<-"method"
+
+pb_eval$method[pb_eval$method=="copyKat"]<-"CopyKat"
+  
+#Create a plot with correlation values
+g<-ggplot(cell_eval,aes(x=cor,fill=clone))+
+  geom_histogram()+
+  xlab("Correlation (Pearson)")+ylab("Number of cells")+
+  geom_vline(data=pb_eval,aes(xintercept=pearson))+
+  facet_wrap(~method,ncol=4)+
+  xlim(0,1)+
+  theme(legend.position="none")+
+  ggtitle("ALL1")
+print(g)
+
+```
+
+Test whether the difference between clones is significant:
+
+```{r}
+
+g<-ggplot(cell_eval,aes(y=cor,x=method,fill=clone))+
+  geom_boxplot()+
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),
+              size = 1, alpha = 0.6)
+print(g)
+
+eval_pvals<-NULL
+for(meth in unique(cell_eval$method)){
+  wtest<-wilcox.test(with(cell_eval,cor[method==meth & clone=="3_1"]),
+                     with(cell_eval,cor[method==meth & clone=="2_3"]),
+                     alternative="greater",paired=FALSE)
+  
+  eval_pvals<-rbind(eval_pvals,
+                    data.frame(method=meth,
+                               p=wtest$p.value))
+}
+eval_pvals$fdr<-p.adjust(eval_pvals$p,method="BH")
+eval_pvals$signif<-eval_pvals$fdr < 0.05
+kable(eval_pvals)
+
+```
+
+## Check the number of filtered genes seems to be much lower for the Smart-seq datasets ...
+
+```{r}
+
+dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
+                 "NUGC4","SNU638","SNU668","HGC27", "SNU16",
+                 "MCF7","iAMP21","COLO320","MM","BCC06","BCC06post",
+                 "mouse",
+                 "HCT116","A375","ALL1","ALL2")
+
+dataset_ending<-setNames(c("","","","",
+                           "","","","", "",
+                           "","",
+                           "_cnvkit","_wes","_wes","_wes",
+                           "",
+                           "","","",""),
+                         dataset_names)
+
+eval_name<-setNames(c("","","","",
+                           "","","","", "",
+                           "",
+                           "","","","",
+                      "","_mouse",
+                      "_smartseq","_smartseq","_smartseq_expr","_smartseq_expr2"),
+                    dataset_names)
+
+#Label the categorie
+data_category<-setNames(c("droplet","droplet","droplet","droplet",
+                           "droplet","droplet","droplet","droplet", "droplet",
+                           "droplet",
+                           "droplet","droplet","droplet","droplet",
+                      "droplet","droplet_mouse",
+                      "plate-based","plate-based","plate-based","plate-based"),
+                    dataset_names)
+
+
+# define_colors<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
+#               "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#9edae5",
+#               "#d62728","#9467bd","#f7b6d2","#dbdb8d")
+
+filtering_res<-NULL
+for(dataset in dataset_names){
+  
+  filename<-paste0("results/output_",dataset,
+                      "/evaluation",eval_name[dataset],"/filtering_results",
+                      dataset_ending[dataset],".tsv")
+  tmp<-fread(filename)
+  tmp$dataset<-dataset
+  filtering_res<-rbind(filtering_res,tmp)
+  
+}
+
+filtering_res$data_type<-data_category[filtering_res$dataset]
+filtering_res$annotation<-ifelse(filtering_res$data_type=="plate-based",
+                                filtering_res$dataset,filtering_res$data_type)
+g<-ggplot(filtering_res,aes(x=method,y=annotated_genes))+
+  geom_violin()+geom_jitter(aes(color=annotation))+
+  #scale_color_manual("Dataset",values=define_colors)+
+  xlab("Method")+ylab("Number of genes after filtering")
+print(g)
+
+```
+
+## Show that the SNP calling could be the problem
+
+```{r,fig.width=4,fig.height=3}
+
+#Get previous SNP results
+snp_calls<-fread("results/snp_calling_summary.tsv")
+snp_calls<-snp_calls[! snp_calls$dataset %in% c("SNU601_sample20","SNU601_sample40",
+                                                "SNU601_sample60","SNU601_sample80"),]
+
+# ------------------------------------------------------------------------------
+# Add Numbat and CaSpER results
+# ------------------------------------------------------------------------------
+
+#Get SNPs for HCT116
+ds<-"HCT116"
+numbat_afs<-fread(paste0("results/output_",ds,"/numbat_smartseq/",ds,"_allele_counts.tsv.gz"))
+
+
+casper_af<-fread(paste0("results/output_",ds,"/casper_smartseq/",ds,
+                        "_BAFExtract/",ds,"_BAFExtract.af"))
+
+snp_calls<-rbind(snp_calls,
+                   data.frame(dataset=ds,
+                              numbat_nsnps=nrow(numbat_afs),
+                              numbat_cells_wsnp=length(unique(numbat_afs$cell)),
+                              numbat_mean_DP=mean(numbat_afs$DP),
+                              casper_nsnps = nrow(casper_af),
+                              casper_mean_DP=mean(casper_af$V6)))
+
+#Get SNPs for A375
+ds<-"A375"
+numbat_afs<-fread(paste0("results/output_",ds,"/numbat_smartseq/",ds,"_allele_counts.tsv.gz"))
+
+casper_af<-fread(paste0("results/output_",ds,"/casper_smartseq/",ds,
+                        "_BAFExtract/",ds,"_BAFExtract.af"))
+
+snp_calls<-rbind(snp_calls,
+                 data.frame(dataset=ds,
+                            numbat_nsnps=nrow(numbat_afs),
+                            numbat_cells_wsnp=length(unique(numbat_afs$cell)),
+                            numbat_mean_DP=mean(numbat_afs$DP),
+                            casper_nsnps = nrow(casper_af),
+                            casper_mean_DP=mean(casper_af$V6)))
+
+
+snp_calls$type<-ifelse(snp_calls$dataset %in% c("HCT116","A375"),
+                       snp_calls$dataset,"droplet-based")
+
+g<-ggplot(snp_calls,aes(x=numbat_nsnps,y=casper_nsnps,color=type))+
+  geom_point()+scale_x_log10()+scale_y_log10()+
+  scale_color_discrete("Dataset")+
+  xlab("Number SNPs Numbat")+ylab("Number SNPs CaSpER")
+
+print(g)
+
+ggsave(g,file="../figure_plots/supp_figure_DNTRseq_SNPs.png")
+
+```
+

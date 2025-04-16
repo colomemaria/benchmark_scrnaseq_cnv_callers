@@ -20,12 +20,12 @@ library(ggdendro)
 library(RColorBrewer)
 library(knitr)
 
+library(cowplot)
+
 theme_set(theme_bw())
 ```
 
 # General characteristics
-
-Important note: exclude SNU16 for now, because we have no current Numbat results for it!
 
 ```{r, echo=TRUE}
 
@@ -58,14 +58,46 @@ mapping_resources<-data.frame(methods_full=c("InferCNV (CNV)","InferCNV (Expr)",
 
 # Overall summary figure
 
-```{r,fig.height=6,fig.width=12}
+```{r,fig.height=7,fig.width=12}
+
+dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
+                 "NUGC4","SNU638","SNU668","HGC27", "SNU16",
+                 "MCF7",
+                 "COLO320","MM","BCC06","BCC06post",
+                 "iAMP21","mouse",
+                 "HCT116","A375","ALL1","ALL2")
+dataset_ending<-setNames(c("","","","",
+                           "","","","", "",
+                           "",
+                           "_cnvkit","_wes","_wes","_wes",
+                           "","",
+                           "","","",""),
+                         dataset_names)
+
+eval_name<-setNames(c("","","","",
+                           "","","","", "",
+                           "",
+                           "","","","",
+                      "","_mouse",
+                      "_smartseq","_smartseq","_smartseq_expr","_smartseq_expr2"),
+                    dataset_names)
+
+#Label the categorie
+data_category<-setNames(c("droplet","droplet","droplet","droplet",
+                           "droplet","droplet","droplet","droplet", "droplet",
+                           "droplet",
+                           "droplet","droplet","droplet","droplet",
+                      "droplet","droplet_mouse",
+                      "plate-based","plate-based","plate-based","plate-based"),
+                    dataset_names)
 
 #Load the files
 all_evals<-NULL
+f1_optimal_cutoffs<-NULL
 for(dataset in dataset_names){
   
   corrs<-fread(paste0("results/output_",dataset,
-                      "/evaluation/evaluation_cnv_prediction_corr",
+                      "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_corr",
                       dataset_ending[dataset],".tsv"))
   
   #Filter for comparison with ground truth
@@ -85,7 +117,7 @@ for(dataset in dataset_names){
   
   #Add also AUC values (separate values for gain and loss)
   auc<-fread(paste0("results/output_",dataset,
-                    "/evaluation/evaluation_cnv_prediction_auc",
+                    "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_auc",
                     dataset_ending[dataset],".txt"))
   auc$method<-method_names[auc$method]
   
@@ -110,24 +142,31 @@ for(dataset in dataset_names){
   auc_others$dataset<-dataset
   auc_others$norm_value<-auc_others$value
   all_evals<-rbind(all_evals,auc_others) 
-
+  
   #Add sens and spec values for F1 scores
   filename<-paste0("results/output_",dataset,
-                   "/evaluation/evaluation_cnv_prediction_f1",
+                   "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_f1",
                    dataset_ending[dataset],".txt")
-  sensspecf1<-fread(filename)
-  sensspecf1$method<-method_names[sensspecf1$method]
+  if(file.exists(filename)){
+    sensspecf1<-fread(filename)
+    sensspecf1$method<-method_names[sensspecf1$method]
+    
+    #Save separately the optimal cutoffs
+    f1_cutoff<-sensspecf1[,c("method","cutoff_f1_gain","cutoff_f1_loss")]
+    f1_cutoff$dataset<-dataset
+    f1_optimal_cutoffs<-rbind(f1_optimal_cutoffs,f1_cutoff)
+    
+    colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                             "_f1")
+    sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+    sensspecf1<-sensspecf1[,c("method","value","variable")]
+    colnames(sensspecf1)[3]<-"metric"
+    sensspecf1$dataset<-dataset
+    sensspecf1$norm_value<-sensspecf1$value
+    all_evals<-rbind(all_evals,sensspecf1)
+  }
   
-  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
-                                           "_f1")
-  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
-  sensspecf1<-sensspecf1[,c("method","value","variable")]
-  colnames(sensspecf1)[3]<-"metric"
-  sensspecf1$dataset<-dataset
-  sensspecf1$norm_value<-sensspecf1$value
-  all_evals<-rbind(all_evals,sensspecf1)
-  
-  #Get memory and runtime
+  #Get memory and runtime (only saved for 10X datasets)
   filename<-paste0("results/output_",dataset,
                    "/evaluation/",dataset,"_resources_required.txt")
   if(file.exists(filename)){
@@ -141,15 +180,17 @@ for(dataset in dataset_names){
     #Convert max_vms from MB to GB (for better readability)
     resources$max_vms<-resources$max_vms/1024
     
-    #Scale runtime and memory both between 0 and 1
-    resources$runtime_h_norm<-(resources$runtime_h-min(resources$runtime_h))/
-      (max(resources$runtime_h)-min(resources$runtime_h))
-    resources$max_vms_norm<-(resources$max_vms-min(resources$max_vms))/
-      (max(resources$max_vms)-min(resources$max_vms))
+    resources$runtime_h_norm<-resources$runtime_h
+     resources$max_vms_norm<-resources$max_vms 
+    #Scale runtime and memory both between 0 and 1 (do the scaling only based on the mean)
+    # resources$runtime_h_norm<-(resources$runtime_h-min(resources$runtime_h))/
+    #   (max(resources$runtime_h)-min(resources$runtime_h))
+    # resources$max_vms_norm<-(resources$max_vms-min(resources$max_vms))/
+    #   (max(resources$max_vms)-min(resources$max_vms))
     
-    #Revert the scale so that efficient methods get a score of 1
-    resources$runtime_h_norm<-1-resources$runtime_h_norm
-    resources$max_vms_norm<-1-resources$max_vms_norm
+    # #Revert the scale so that efficient methods get a score of 1
+    # resources$runtime_h_norm<-1-resources$runtime_h_norm
+    # resources$max_vms_norm<-1-resources$max_vms_norm
     
     #Some methods are evaluated multiple times (duplicate these entries)
     resources<-merge(resources,mapping_resources,
@@ -171,8 +212,21 @@ for(dataset in dataset_names){
     resources_mem<-resources_mem[,c("method","value","metric","dataset","norm_value")]
     all_evals<-rbind(all_evals,resources_mem)
     
+    
   }
+  
 }
+
+#Add type
+all_evals$datatype<-data_category[all_evals$dataset]
+
+#Filter it again for droplet-based datasets in the first part
+complete_evals<-all_evals
+all_evals<-all_evals[all_evals$datatype=="droplet",]
+
+#Save this file because I need it again and again
+write.table(all_evals,file="results/all_metrics_datasets_combined.tsv",
+            sep="\t",quote=FALSE,row.names=FALSE)
 
 #Focus on core metrics
 all_evals<-all_evals[all_evals$metric %in% c("pearson","auc_gains_trunc",
@@ -185,8 +239,53 @@ all_evals<-all_evals%>%
   summarize(value=mean(value,na.rm=TRUE),
             norm_value=mean(norm_value,na.rm=TRUE))
 
+#Runtime and max vms are normalized after calculating the average scores
+runtime_vals<-all_evals$value[all_evals$metric=="runtime_h"]
+all_evals$norm_value[all_evals$metric=="runtime_h"]<-(runtime_vals-min(runtime_vals))/
+                                              (max(runtime_vals)-min(runtime_vals))
+all_evals$norm_value[all_evals$metric=="runtime_h"]<-1-all_evals$norm_value[all_evals$metric=="runtime_h"]
+
+memory_vals<-all_evals$value[all_evals$metric=="max_vms_gb"]
+all_evals$norm_value[all_evals$metric=="max_vms_gb"]<-(memory_vals-min(memory_vals))/
+                                              (max(memory_vals)-min(memory_vals))
+all_evals$norm_value[all_evals$metric=="max_vms_gb"]<-1-all_evals$norm_value[all_evals$metric=="max_vms_gb"]
+
 all_evals$category<-ifelse(all_evals$metric %in% c("runtime_h","max_vms_gb"),
-                           "Resource\nrequirements","Performance\ncancer data")
+                           "Resource\nrequirements","Performance\ncancer data (droplet)")
+
+# ------------------------------------------------------------------------------
+# Add paired data and mouse data
+# ------------------------------------------------------------------------------
+
+paired_evals<-complete_evals[complete_evals$datatype=="plate-based",]
+
+#Focus on core metrics
+paired_evals<-paired_evals[paired_evals$metric %in% c("pearson","auc_gains_trunc",
+                                             "auc_losses_trunc","max_f1"),]
+
+#Get mean across datasets
+paired_evals<-paired_evals%>%
+  group_by(method,metric)%>%
+  summarize(value=mean(value,na.rm=TRUE),
+            norm_value=mean(norm_value,na.rm=TRUE))
+paired_evals$category<-"Performance\ncancer data (plate)"
+
+all_evals<-rbind(all_evals,paired_evals)
+
+
+paired_evals<-complete_evals[complete_evals$datatype=="droplet_mouse",]
+
+#Focus on core metrics
+paired_evals<-paired_evals[paired_evals$metric %in% c("pearson","auc_gains_trunc",
+                                             "auc_losses_trunc","max_f1"),]
+
+#Get mean across datasets
+paired_evals<-paired_evals%>%
+  group_by(method,metric)%>%
+  summarize(value=mean(value,na.rm=TRUE),
+            norm_value=mean(norm_value,na.rm=TRUE))
+paired_evals$category<-"Performance\ncancer data (mouse)"
+all_evals<-rbind(all_evals,paired_evals)
 
 # ------------------------------------------------------------------------------
 # Add metric for diploid evaluation
@@ -197,9 +296,9 @@ mse_perf1<-fread("results/output_pbmc/evaluation/evaluation_cnv_prediction_rmse_
 mse_perf1$metric<-"rmse_matchedRef"
 mse_perf2<-fread("results/output_pbmc_monoref/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
 mse_perf2$metric<-"rmse_otherCt"
-mse_perf3<-fread("results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf3<-fread("results/output_pbmc_ext_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
 mse_perf3$metric<-"rmse_otherRef"
-mse_perf4<-fread("results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf4<-fread("results/output_pbmc_ext_mono_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
 mse_perf4$metric<-"rmse_otherCtRef"
 mse_perf<-rbind(mse_perf1,mse_perf2,mse_perf3,mse_perf4)
 
@@ -220,15 +319,11 @@ mse_perf$category<-"Performance\ndiploid data"
 all_evals<-rbind(all_evals,mse_perf)
 
 # ------------------------------------------------------------------------------
-# Deviation dependent on reference dataset 
-# ------------------------------------------------------------------------------
-
-# ------------------------------------------------------------------------------
 #Add metric for automatic cell type identification (use only MM currently)
 # ------------------------------------------------------------------------------
 
 pred_comb<-NULL
-for(annot_data in c("MM","BCC06","BCC06post")){
+for(annot_data in c("MM","BCC06","BCC06post","iAMP21")){
   pred<-fread(paste0("results/output_",annot_data,
                    "/evaluation/evaluation_cancer_prediction_",annot_data,".tsv"))
   pred$acc_woNA<-NULL
@@ -294,7 +389,8 @@ all_evals<-rbind(all_evals,compare_methods)
 # ------------------------------------------------------------------------------
 
 # Order methods after prediction performance (maximal F1 score)
-method_ordering<-all_evals[all_evals$metric=="max_f1",]
+method_ordering<-all_evals[all_evals$metric=="max_f1" & 
+                             all_evals$category=="Performance\ncancer data (droplet)",]
 
 all_evals$method<-factor(all_evals$method,
                          levels=method_ordering$method[order(method_ordering$value,
@@ -302,7 +398,9 @@ all_evals$method<-factor(all_evals$method,
 
 # Order categories
 all_evals$category<-factor(all_evals$category,
-                           levels=c("Performance\ncancer data",
+                           levels=c("Performance\ncancer data (droplet)",
+                                    "Performance\ncancer data (plate)",
+                                    "Performance\ncancer data (mouse)",
                                     "Performance\ndiploid data",
                                     "Detecting\ntumor cells",
                                     "Detecting\nsubclones",
@@ -310,45 +408,132 @@ all_evals$category<-factor(all_evals$category,
 
 #Rename metric values
 rename_metrics<-setNames(
-         c("Pearson corr","Trunc AUC (gains)","Trunc AUC (losses)","Max F1 Score",
+         c("Max F1 Score","Pearson corr","Trunc AUC (gains)","Trunc AUC (losses)",
            "RMSE (matched ref)","RMSE (other cell type)","RMSE (other dataset)",
            "RMSE (other cell type & dataset)",
            "Accuracy","ARI","Homogeneity",
            "Runtime (h)","Memory (GB)"),
-         c("pearson","auc_gains_trunc","auc_losses_trunc","max_f1",
+         c("max_f1","pearson","auc_gains_trunc","auc_losses_trunc",
            "rmse_matchedRef","rmse_otherCt","rmse_otherRef","rmse_otherCtRef",
            "acc","adj_rand_index","homogen",
            "runtime_h","max_vms_gb"))
 all_evals$metric<-rename_metrics[all_evals$metric]
 all_evals$metric<-factor(all_evals$metric,levels=rename_metrics)
 
-# g<-ggplot(all_evals,aes(y=method,x=metric,fill=norm_value))+
-#   geom_tile()+xlab("Metric")+
-#   scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
-#   geom_text(aes(label=round(value,2),
-#                 color=ifelse(norm_value<0.6,'white','black')),
-#             size=5)+
-#   scale_color_manual(values=c("black","white"))+
-#   facet_grid(~category,scales = "free",space="free")+
-#   theme(axis.title.y = element_blank(),
-#         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
-#         legend.position="none",
-#         text=element_text(size=16))+
-#   guides(color="none")
-# print(g)
+#Get rank (desc for decreasing order)
+ranked<-all_evals %>% arrange(category,metric,desc(norm_value)) %>%
+    group_by(category,metric) %>%
+    mutate(rank = rank(desc(norm_value), ties.method = "min"))
 
-g<-ggplot(all_evals,aes(y=method,x=metric,color=norm_value,size=norm_value))+
+```
+
+
+```{r,fig.height=7,fig.width=17}
+
+g<-ggplot(ranked,aes(y=method,x=metric,color=norm_value,size=rank))+
   geom_point()+xlab("Metric")+
-  scale_color_viridis("Normalized\nScore",limits=c(0,1))+
+  scale_color_viridis("Normalized\nScore",limits=c(0,1),breaks=c(0,0.5,1))+
+  scale_size("Rank",trans = 'reverse',breaks=c(1,5,9),range = c(4, 10))+
+  facet_grid(~category,scales = "free",space="free")+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=55,vjust=1,hjust=1),
+        legend.position="bottom",
+        text=element_text(size=14))
+print(g)
+
+ggsave(g,file="../figure_plots/fig5_summary_plot.png")
+
+```
+
+```{r,fig.height=15,fig.width=8, eval=FALSE}
+plot_list<-NULL
+for(cat in levels(ranked$category)){
+  
+  if(cat == "Resource\nrequirements"){
+    
+      g <- ggplot(ranked[ranked$category == cat,], 
+              aes(x = method, y = metric, color = norm_value, size = rank)) + 
+  geom_point() + 
+  ylab("Metric") + 
+  scale_color_viridis("Normalized\nScore", limits = c(0, 1), breaks = c(0, 0.5, 1)) + 
+  scale_size("Rank", breaks = c(1, 5, 9), range = c(4, 10)) + 
+  facet_wrap(category~., scales = "free", ncol = 1) +  
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size = 14), 
+        legend.position = "bottom",
+        text = element_text(size = 14))
+  } else {
+    
+      g <- ggplot(ranked[ranked$category == cat,], 
+              aes(x = method, y = metric, color = norm_value, size = rank)) + 
+  geom_point() + 
+  ylab("Metric") + 
+  scale_color_viridis("Normalized\nScore", limits = c(0, 1), breaks = c(0, 0.5, 1)) + 
+  scale_size("Rank", breaks = c(1, 5, 9), range = c(4, 10)) + 
+  facet_wrap(category~., scales = "free", ncol = 1) +  
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size = 14), 
+        legend.position = "none",
+        text = element_text(size = 14))
+  }
+
+  
+  plot_list<-c(plot_list,list(g))
+}
+
+ggarrange(plotlist=plot_list,align="v",ncol=1,common.legend=TRUE,
+          heights=c(0.4,0.4,0.4,0.4,0.2,0.3,0.6))
+
+
+```
+
+
+Show all the values:
+
+```{r}
+
+ranked$category<-gsub("\n"," ",ranked$category)
+ranked$value<-gsub("\\.",",",as.character(round(ranked$value,3)))
+si_table<-dcast(ranked,category+metric~method,id.vars=value)
+
+kable(si_table)
+
+```
+
+
+
+Other color gradients to decide which one is the nicest looking:
+
+```{r,fig.height=7,fig.width=12,eval=FALSE}
+
+g<-ggplot(ranked,aes(y=method,x=metric,color=norm_value,size=rank))+
+  geom_point()+xlab("Metric")+
+  scale_color_viridis("Normalized\nScore",limits=c(0,1),
+                      breaks=c(0,0.5,1), option="plasma")+
+  scale_size("Rank",trans = 'reverse',breaks=c(1,5,9),range = c(0, 10))+
   facet_grid(~category,scales = "free",space="free")+
   theme(axis.title.y = element_blank(),
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
-        legend.position="none",
-        text=element_text(size=14))+
-  guides(color="none")
+        legend.position="bottom",
+        text=element_text(size=14))
 print(g)
 
-ggsave(g,file="../figure_plots/summary_plot.png")
+g<-ggplot(ranked,aes(y=method,x=metric,color=norm_value,size=rank))+
+  geom_point()+xlab("Metric")+
+  scale_color_viridis("Normalized\nScore",limits=c(0,1),
+                      breaks=c(0,0.5,1),option="turbo")+
+  scale_size("Rank",trans = 'reverse',breaks=c(1,5,9),range = c(0, 10))+
+  facet_grid(~category,scales = "free",space="free")+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position="bottom",
+        text=element_text(size=14))
+print(g)
+
 ```
 
 
@@ -360,7 +545,7 @@ Overview plot
 
 ## Figure 2 - Performance overview & Supplementary Figure 2
 
-```{r,fig.height=20,fig.width=17}
+```{r,fig.height=22,fig.width=17}
 
 # ------------------------------------------------------------------------------
 # Overall performance scores
@@ -368,11 +553,34 @@ Overview plot
 
 dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU668","HGC27", "SNU16",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7",
+                 "COLO320","MM","BCC06","BCC06post",
+                 "iAMP21","mouse",
+                 "HCT116","A375","ALL1","ALL2")
 dataset_ending<-setNames(c("","","","",
                            "","","","", "",
-                           "","_cnvkit","_wes","_wes","_wes"),
+                           "",
+                           "_cnvkit","_wes","_wes","_wes",
+                           "","",
+                           "","","",""),
                          dataset_names)
+
+eval_name<-setNames(c("","","","",
+                           "","","","", "",
+                           "",
+                           "","","","",
+                      "","_mouse",
+                      "_smartseq","_smartseq","_smartseq_expr","_smartseq_expr2"),
+                    dataset_names)
+
+#Label the categorie
+data_category<-setNames(c("droplet","droplet","droplet","droplet",
+                           "droplet","droplet","droplet","droplet", "droplet",
+                           "droplet",
+                           "droplet","droplet","droplet","droplet",
+                      "droplet","droplet_mouse",
+                      "plate-based","plate-based","plate-based","plate-based"),
+                    dataset_names)
 
 #Load the files
 all_evals<-NULL
@@ -380,7 +588,7 @@ f1_optimal_cutoffs<-NULL
 for(dataset in dataset_names){
   
   corrs<-fread(paste0("results/output_",dataset,
-                      "/evaluation/evaluation_cnv_prediction_corr",
+                      "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_corr",
                       dataset_ending[dataset],".tsv"))
   
   #Filter for comparison with ground truth
@@ -400,7 +608,7 @@ for(dataset in dataset_names){
   
   #Add also AUC values (separate values for gain and loss)
   auc<-fread(paste0("results/output_",dataset,
-                    "/evaluation/evaluation_cnv_prediction_auc",
+                    "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_auc",
                     dataset_ending[dataset],".txt"))
   auc$method<-method_names[auc$method]
   
@@ -428,7 +636,7 @@ for(dataset in dataset_names){
   
   #Add sens and spec values for F1 scores
   filename<-paste0("results/output_",dataset,
-                   "/evaluation/evaluation_cnv_prediction_f1",
+                   "/evaluation",eval_name[dataset],"/evaluation_cnv_prediction_f1",
                    dataset_ending[dataset],".txt")
   if(file.exists(filename)){
     sensspecf1<-fread(filename)
@@ -449,7 +657,7 @@ for(dataset in dataset_names){
     all_evals<-rbind(all_evals,sensspecf1)
   }
   
-  #Get memory and runtime
+  #Get memory and runtime (only saved for 10X datasets)
   filename<-paste0("results/output_",dataset,
                    "/evaluation/",dataset,"_resources_required.txt")
   if(file.exists(filename)){
@@ -495,18 +703,36 @@ for(dataset in dataset_names){
     
     
   }
+  
 }
 
+#Add type
+all_evals$datatype<-data_category[all_evals$dataset]
+
+#Calculate the F1 scores only for the droplet-based ones from human
 per_categorie_metric<-all_evals%>%
+  filter(datatype=="droplet" & dataset != "mouse")%>%
   group_by(method,metric)%>%
   summarize(mean_value=mean(value,na.rm=TRUE),
             sd_value=sd(value,na.rm=TRUE),
             min_value=min(value,na.rm=TRUE),
             max_value=max(value,na.rm=TRUE))
 
-define_colors<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
-              "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#9edae5",
-              "#d62728","#9467bd","#f7b6d2","#dbdb8d")
+#For 20 dataset
+# define_colors<-c('#db5f57', '#db8657', '#dbae57', '#dbd657','#b9db57','#91db57',
+#                  '#69db57', '#57db6c', '#57db94', '#57dbbb', '#57d3db', '#57acdb'
+#                  ,'#5784db', '#575cdb', '#7957db', '#a157db', '#c957db',
+#                  '#db57c6', '#db579e', '#db5777')
+
+define_colors<-c('#d60000', '#8c3bff', '#018700', '#00acc6', '#97ff00', '#ff7ed1',
+                 '#6b004f', '#ffa52f', '#573b00', '#005659', '#0000dd', '#00fdcf',
+                 '#a17569', '#bcb6ff', '#95b577', '#bf03b8', '#645474', '#790000',
+                 '#0774d8', '#fdf490')
+
+# For 16 dataset
+# define_colors<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
+#               "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#9edae5",
+#               "#d62728","#9467bd","#f7b6d2","#dbdb8d")
 
 #Create violin plots to see how much the performance spreads across methods
 all_evals_part3<-all_evals[all_evals$metric %in% 
@@ -528,46 +754,27 @@ all_evals_part3$metric<-rename_metric[as.character(all_evals_part3$metric)]
 all_evals_part3$metric<-factor(all_evals_part3$metric,levels=rename_metric)
 all_evals_part3<-all_evals_part3[all_evals_part3$dataset!="combined",]
 
+#Get the right symbol for each data category
+datatype_alphabetic<-data_category[sort(names(data_category))]
+symbol_order<-ifelse(datatype_alphabetic=="droplet",16,
+                     ifelse(datatype_alphabetic=="plate-based",15,17))
+
 g.1<-ggplot(all_evals_part3,aes(x=method,y=value))+
-  geom_violin()+geom_jitter(aes(color=dataset))+
+  geom_violin()+
+  geom_jitter(aes(color=dataset,shape=datatype),size=3)+
+              #position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),
+              #size = 3, alpha = 0.6)+#aes(color=dataset))+
   scale_color_manual("Dataset",values=define_colors)+
+  scale_shape_discrete("Technology",labels=c("Droplet (human)","Droplet (mouse)","Plate (human)"))+
   xlab("Method")+ylab("Performance value")+
+  ylim(0,1)+
   facet_wrap(~metric,scales="free",ncol=2)+
   theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
         legend.position = "bottom",
-        text=element_text(size=21))
-
-
-# ------------------------------------------------------------------------------
-# Plot about runtime and memory consumption
-# ------------------------------------------------------------------------------
-
-#Get runtime + memory from overall results
-resources<-all_evals[all_evals$metric %in% c("runtime_h","max_vms_gb"),]
-resources<-dcast(resources,method+dataset~metric,value.var="value")
-
-#Remove duplicated methods
-resources<-resources[!endsWith(resources$method,"(Expr)"),]
-resources$method<-gsub(" \\(CNV\\)","",resources$method)
-
-#Get mean plus range
-resources<-resources%>%
-  group_by(method)%>%
-  summarize(mean_max_vms_gb=mean(max_vms_gb),
-            sd_max_vms_gb=sd(max_vms_gb),
-            mean_runtime_h=mean(runtime_h),
-            sd_runtime_h=sd(runtime_h))
-
-g.4<-ggplot(resources,aes(x=mean_runtime_h,y=mean_max_vms_gb,color=method))+
-  geom_pointrange(aes(ymin=mean_max_vms_gb-sd_max_vms_gb, 
-                      ymax=mean_max_vms_gb+sd_max_vms_gb))+
-  geom_pointrange(aes(xmin=mean_runtime_h-sd_runtime_h,
-                      xmax=mean_runtime_h+sd_runtime_h))+
-  xlab("Runtime (h)")+ylab("Memory (GB)")+
-  scale_color_discrete("Method")+
-  theme(text=element_text(size=21),
-        legend.position="bottom")+
-  guides(color=guide_legend(nrow=2,byrow=TRUE))
+        text=element_text(size=21),
+        legend.box.just = "center")+
+  guides(color=guide_legend(override.aes = list(shape=symbol_order)),
+         shape = guide_legend(nrow=3))
 
 # ------------------------------------------------------------------------------
 # Karyogram SNU601
@@ -660,21 +867,72 @@ g.3<-ggplot(compare_methods,aes(x=method2,y=method1,fill=pearson))+
   scale_y_discrete(limits=rev)+
   xlab("Method")+
   ylab("Method")+
-  scale_fill_viridis("Pearson\ncorrelation",limits=c(0,1))+
+  scale_fill_viridis("Pearson\ncorrelation  ",limits=c(0,1),breaks=c(0,0.5,1))+
   guides(color="none")+
-  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1),
+  theme(aspect.ratio = 0.8,
+        axis.text.x = element_text(angle=45,vjust=1,hjust=1),
+        legend.position = "bottom",
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17),
         text=element_text(size=21))
+
+# ------------------------------------------------------------------------------
+# Add the most important dataset characteristics
+# Select the top 5
+# ------------------------------------------------------------------------------
+
+method_colors<-c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"
+                 ,"#8c564b","#e377c2", "#7f7f7f", "#bcbd22")
+
+suppressWarnings(corrs<-fread("results/correlation_datafeatures_maxf1score.tsv"))
+
+corrs<-corrs[corrs$type %in% c("total_cancer_umi","num_cancer_cells",
+                               "mean_drop_cell","mean_coef_var",
+                               "fraction_gain","fraction_cnvs", 
+                               "mean_nonZeroGenes_cell")]
+
+#Rename
+rename_labels<-setNames(c("Total UMI counts","Number cancer cells","Dropout rate",
+                          "Coefficient of variation","Fraction of gained regions",
+                          "Fraction of CNV regions","Number expressed genes"),
+                        c("total_cancer_umi","num_cancer_cells",
+                          "mean_drop_cell","mean_coef_var",
+                          "fraction_gain","fraction_cnvs",
+                          "mean_nonZeroGenes_cell"))
+
+corrs$type_label<-rename_labels[corrs$type]
+
+#Order them based on their mean correlation
+corrs_ordering<-corrs%>%
+  group_by(type_label)%>%
+  summarize(mean_cor=mean(cor))
+
+corrs$type_label<-factor(corrs$type_label,
+                         levels=corrs_ordering$type_label[order(corrs_ordering$mean_cor)])
+
+g.4<-ggplot(corrs,aes(x=cor,y=type_label,fill=method))+
+  geom_bar(stat="identity",position="dodge")+
+  scale_fill_manual("Method",values=method_colors)+
+  xlab("Correlation between feature and max F1 score")+
+  ylab("Dataset feature")+
+  theme(legend.position="bottom",
+        #aspect.ratio= 0.9,
+        text=element_text(size=21),
+        legend.text=element_text(size=17),
+        legend.title=element_text(size=17))+
+  guides(fill=guide_legend(nrow=3))
 
 # ------------------------------------------------------------------------------
 # Combination of everything
 # ------------------------------------------------------------------------------
 
-g.bottom<-ggarrange(g.3,g.4,labels=LETTERS[3:4],widths=c(0.6,0.4),font.label=list(size=21))
-g<-ggarrange(g.1,g.2,g.bottom,labels=LETTERS[1:2],heights=c(0.5,0.25,0.25),
+g.bottom<-ggarrange(g.4,g.3,labels=LETTERS[2:3],widths=c(0.45,0.55),font.label=list(size=21))
+g<-ggarrange(g.1,NULL,g.bottom,NULL,g.2,labels=c(LETTERS[1],"","","",LETTERS[4]),heights=c(0.42,0.02,0.30,0.02,0.24),
              ncol=1,font.label=list(size=21))
 print(g)
 
 ggsave(g,file="../figure_plots/fig2_overview_performance.png")
+ggsave(g,file="../figure_plots/fig2_overview_performance.pdf")
 
 #Print the metrics
 eval_table<-per_categorie_metric[per_categorie_metric$metric=="max_f1",]
@@ -704,9 +962,46 @@ kable(eval_table[order(eval_table$mean_value,decreasing=TRUE),])
 
 ```
 
+## Supplementary Figure: resource requirements
+
+```{r}
+
+#Get runtime + memory from overall results
+resources<-all_evals[all_evals$metric %in% c("runtime_h","max_vms_gb"),]
+resources<-dcast(resources,method+dataset~metric,value.var="value")
+
+#Remove duplicated methods
+resources<-resources[!endsWith(resources$method,"(Expr)"),]
+resources$method<-gsub(" \\(CNV\\)","",resources$method)
+
+#Get mean plus range
+resources<-resources%>%
+  group_by(method)%>%
+  summarize(mean_max_vms_gb=mean(max_vms_gb),
+            sd_max_vms_gb=sd(max_vms_gb),
+            mean_runtime_h=mean(runtime_h),
+            sd_runtime_h=sd(runtime_h))
+
+g<-ggplot(resources,aes(x=mean_runtime_h,y=mean_max_vms_gb,color=method))+
+  geom_pointrange(aes(ymin=mean_max_vms_gb-sd_max_vms_gb,
+                      ymax=mean_max_vms_gb+sd_max_vms_gb))+
+  geom_pointrange(aes(xmin=mean_runtime_h-sd_runtime_h,
+                      xmax=mean_runtime_h+sd_runtime_h))+
+  xlab("Runtime (h)")+ylab("Memory (GB)")+
+  scale_color_discrete("Method")+
+  theme(text=element_text(size=21),
+        legend.position="bottom")+
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+
+print(g)
+
+ggsave(g,file="../figure_plots/supp_figure_resource_requirements.png")
+
+```
+
 ## Supplementary Figure: more detailed results with all metrics
 
-```{r,fig.height=15,fig.width=10}
+```{r,fig.height=15,fig.width=11}
 
 all_metrics<-c("max_f1","pearson",
                "auc_gains_trunc","auc_losses_trunc",
@@ -749,11 +1044,15 @@ ggsave(g,file="../figure_plots/sfig2_performance_sensspec.png")
 
 ## Supplemetary Figure: Per-cell evaluation results from SNU601
 
-```{r,fig.width=12,fig.height=8}
+```{r,fig.width=12,fig.height=10}
 
 res_cell<-fread("results/output_SNU601/evaluation/SNU601_evaluation_per_cell_results.tsv")
 res_cell$method[res_cell$method=="CopyKat"]<-"copyKat"
 res_complete<-all_evals[all_evals$dataset=="SNU601",]
+
+# ------------------------------------------------------------------------------
+# Subplot 1
+# ------------------------------------------------------------------------------
 
 #Replace pearson by cor
 res_complete$metric<-as.character(res_complete$metric)
@@ -772,28 +1071,40 @@ g.1<-ggplot(res_cell,aes(x=cor,fill=method))+
   xlim(0,1)+
   theme(legend.position="none")
 
-# #AUC truncated (gain)
-# g.2<-ggplot(res_cell,aes(x=auc_trunc_gain,fill=method))+
-#   geom_histogram()+
-#   xlab("Truncated AUC (gain)")+
-#   geom_vline(data=res_complete[res_complete$metric=="auc_gains_trunc"],aes(xintercept=value))+
-#   facet_wrap(~method)+
-#   xlim(0,1)+
-#   theme(legend.position="none")
-# 
-# #AUC truncated (loss)
-# g.3<-ggplot(res_cell,aes(x=auc_trunc_loss,fill=method))+
-#   geom_histogram()+
-#   xlab("Truncated AUC (loss)")+
-#   geom_vline(data=res_complete[res_complete$metric=="auc_losses_trunc"],aes(xintercept=value))+
-#   facet_wrap(~method)+
-#   xlim(0,1)+
-#   theme(legend.position="none")
+# ------------------------------------------------------------------------------
+# Subplot 1
+# ------------------------------------------------------------------------------
 
-#g<-ggarrange(g.1,g.2,g.3,ncol=1)
-print(g.1)
+pseudobulk_eval<-res_complete[res_complete$metric=="cor",c("method","value")]
+res_combined<-merge(res_cell[,c("method","cor")],
+                    pseudobulk_eval,by=c("method"))
 
-ggsave(g.1,file="../figure_plots/suppfig_per_cell_performance.png")
+#Calculate deviation between pseudobulk correlation and per cell correlation
+res_combined$abs_dev<-res_combined$value-res_combined$cor
+
+#Map whether it is a per cell estimate or a subclone estimate
+method_type<-setNames(c("subclone","cell","cell","cell",
+                 "subclone","cell","cell",
+                 "subclone","cell"),
+                 c("InferCNV (CNV)", "InferCNV (Expr)", "CaSpER", "copyKat", 
+               "SCEVAN (CNV)", "SCEVAN (Expr)", "Numbat (Expr)", 
+               "Numbat (CNV)", "CONICSmat"))
+
+res_combined$method_type<-method_type[res_combined$method]
+
+#Calculate the absolute deviation
+g.2<-ggplot(res_combined,aes(x=method,y=abs_dev,color=method_type))+
+  geom_boxplot()+
+  scale_color_discrete("Method type")+
+  ylab("Absolute deviation\nfrom pseudobulk correlation")+
+  xlab("Method")+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        aspect.ratio=0.4)
+
+g<-ggarrange(g.1,g.2,ncol=1,heights=c(0.6,0.4),labels=c("A","B"))
+print(g)
+
+ggsave(g,file="../figure_plots/suppfig_per_cell_performance.png")
 
 #Get the summary statistics
 #res_cell<-melt(res_cell,id.vars=c("method"))
@@ -804,8 +1115,504 @@ kable(tmp)
   
 ```
 
+## Figure 3 - Identification of diploid datasets and different reference datasets
 
-## Figure 3 - Performance dependent on the reference dataset
+```{r,fig.height=14,fig.width=17}
+
+
+# ------------------------------------------------------------------------------
+# Performance of predicting CD4+ T cells with different references
+# ------------------------------------------------------------------------------
+
+mse_perf1<-fread("results/output_pbmc/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf1$ref<-"CD4+ T cells"
+mse_perf2<-fread("results/output_pbmc_monoref/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf2$ref<-"CD14+ Monocytes"
+mse_perf3<-fread("results/output_pbmc_ext_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf3$ref<-"CD4+ T cells (ext ref)"
+mse_perf4<-fread("results/output_pbmc_ext_mono_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
+mse_perf4$ref<-"CD14+ Monocytes (ext ref)"
+mse_perf<-rbind(mse_perf1,mse_perf2,mse_perf3,mse_perf4)
+
+#Rename methods
+mse_perf$method<-method_names[mse_perf$method]
+
+#Order them based on RSME (for the CD4T cells)
+mse_perf$method<-factor(mse_perf$method, 
+                        levels=method_names[mse_perf1$method[order(mse_perf1$rmse)]])
+  
+#Change facet order
+mse_perf$ref<-factor(mse_perf$ref,levels=unique(mse_perf$ref))
+
+g.1 <-ggplot(mse_perf,aes(x=method,y=rmse,fill=method))+
+  geom_bar(stat="identity")+
+  xlab("Method")+
+  ylab("RMSE")+
+  facet_wrap(~ref,ncol=2)+
+  theme(legend.position = "none",
+        text=element_text(size=21),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+# ------------------------------------------------------------------------------
+# The effect of different references on the performance
+# ------------------------------------------------------------------------------
+
+define_colors<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
+              "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#9edae5",
+              "#d62728","#9467bd","#f7b6d2","#dbdb8d")
+
+#Vector for renaming methods (official published names)
+method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_vega","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+panelnames<-setNames(c("Maximal F1 Score","Correlation",
+                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                        c("max_f1","pearson",
+                               "auc_gains_trunc","auc_losses_trunc"))
+
+#Load the different result files
+dataset_names<-c("MM","MM_tcell","MM_bcell","MM_mono","MM_gastric","MM_SNU601")
+
+#Load the files
+all_evals<-NULL
+for(dataset in dataset_names){
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1_wes.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"MM"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+}
+
+all_evals<-all_evals[all_evals$metric == "max_f1",]
+g.2<-ggplot(all_evals,aes(x=dataset,y=value))+
+  geom_violin()+geom_jitter(aes(color=method),size=4)+
+  scale_color_manual("Method",values=define_colors)+
+  xlab("Method")+ylab("Max F1 score")+
+  ylim(0.2,0.8)+
+  theme(legend.position = "bottom",
+        text=element_text(size=20),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+#Load the different result files
+dataset_names<-c("SNU601","SNU601_epiendo","SNU601_fibsom", "SNU601_immune","SNU601_MM")
+all_evals<-NULL
+#Load the files
+for(dataset in dataset_names){
+  
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"SNU601"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+}
+
+all_evals<-all_evals[all_evals$metric == "max_f1",]
+g.3<-ggplot(all_evals,aes(x=dataset,y=value))+
+  geom_violin()+geom_jitter(aes(color=method), size=4)+
+  scale_color_manual("Method",values=define_colors)+
+  xlab("Method")+ylab("Max F1 score")+
+  ylim(0.2,0.8)+
+  theme(legend.position = "bottom",
+        text=element_text(size=20),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))+
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+
+g.bottom<-ggarrange(g.2,g.3,ncol=2,labels=LETTERS[2:3],font.label=list(size=21),
+                    align="hv", common.legend = TRUE,legend="bottom")
+
+# ------------------------------------------------------------------------------
+# Combine the different panels
+# ------------------------------------------------------------------------------
+
+g<-ggarrange(g.1,g.bottom,heights=c(0.5,0.5),
+             labels=c(LETTERS[1],""),font.label=list(size=21),ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/fig3_performance_ref_diploid.png")
+
+```
+
+## Potential Supplement (not used at the moment) - Performance across dataset ordered by method
+
+```{r, fig.height=7,fig.width=17,eval=FALSE}
+
+#Load the different result files
+dataset_names<-c("MM","MM_tcell","MM_bcell","MM_mono","MM_gastric","MM_SNU601")
+
+#Load the files
+all_evals<-NULL
+for(dataset in dataset_names){
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1_wes.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"MM"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+}
+
+all_evals<-all_evals[all_evals$metric == "max_f1",]
+g.2<-ggplot(all_evals,aes(x=method,y=value))+
+  geom_violin()+geom_jitter(aes(color=dataset),size=4)+
+  scale_color_manual("Dataset",values=define_colors[1:6])+
+  xlab("Method")+ylab("Max F1 score")+
+  ylim(0.2,0.8)+
+  theme(legend.position = "bottom",
+        text=element_text(size=20),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+#Load the different result files
+dataset_names<-c("SNU601","SNU601_epiendo","SNU601_fibsom", "SNU601_immune","SNU601_MM")
+all_evals<-NULL
+#Load the files
+for(dataset in dataset_names){
+  
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$group<-"SNU601"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+}
+
+all_evals<-all_evals[all_evals$metric == "max_f1",]
+g.3<-ggplot(all_evals,aes(x=method,y=value))+
+  geom_violin()+geom_jitter(aes(color=dataset), size=4)+
+  scale_color_manual("Dataset",values=define_colors[7:11])+
+  xlab("Method")+ylab("Max F1 score")+
+  ylim(0.2,0.8)+
+  theme(legend.position = "bottom",
+        text=element_text(size=20),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))+
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+
+g<-ggarrange(g.2,g.3,ncol=2,labels=LETTERS[1:2],font.label=list(size=21))
+ggsave(g,file="../figure_plots/supp_diff_refs_reorded.png")
+print(g)
+
+```
+
+## Supplement - Karyograms for the performance on diploid datasets
+
+```{r,fig.height=24,fig.width=17}
+
+# ------------------------------------------------------------------------------
+# Karyograms for T-cell normalisied using T-cells
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+scaling_table<-fread("results/output_SNU601/evaluation/scaling_factors.tsv")
+combined_methods<-fread("results/output_pbmc/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+method_names<-setNames(c("scWGS","HoneyBADGER (CNV)","HoneyBADGER (Expr)",
+                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("wgs_mean","hb_cnv","honeybadger",
+                         "infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.1 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD4+ T cells")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=21))
+
+
+# ------------------------------------------------------------------------------
+# Karyograms for T-cell normalisied using Monocytes
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+combined_methods<-fread("results/output_pbmc_monoref/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.2 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD14+ Monocytes")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=21))
+
+# ------------------------------------------------------------------------------
+# Karyograms for T-cell normalisied using T-cells (external reference)
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+combined_methods<-fread("results/output_pbmc_ext_cr7/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.3 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD4+ T cells (ext ref)")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=21))
+
+# ------------------------------------------------------------------------------
+# Karyograms for T-cell normalisied using Monocytes (external data)
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+combined_methods<-fread("results/output_pbmc_ext_mono_cr7/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.4 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD14+ Monocytes (ext ref)")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=21))
+
+g<-ggarrange(g.1,g.2,g.3,g.4,heights=c(0.24,0.24,0.24,0.28),
+             labels=LETTERS[1:4],font.label=list(size=21),ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/supp_karyogramms_diploid.png")
+
+```
+
+## Supplement - Performance dependent on the reference dataset
 
 ```{r,fig.width=8,fig.height=8}
 
@@ -826,94 +1633,110 @@ panelnames<-setNames(c("Maximal F1 Score","Correlation",
 # Performance of MCF7 with different reference datasets
 # ------------------------------------------------------------------------------
 
-# #Load the different result files
-# dataset_names<-c("MCF7","MCF7_stromal","MCF7_endothelial","MCF7_immune","MCF7_SNU601")
-# 
-# #Load the files
-# all_evals<-NULL
-# for(dataset in dataset_names){
-#   
-#   corrs<-fread(paste0("results/output_",dataset,
-#                       "/evaluation/evaluation_cnv_prediction_corr.tsv"))
-#   
-#   #Filter for comparison with ground truth
-#   corrs<-corrs[corrs$method1 %in% c("scWGS","WGS","WES")]
-#   corrs<-corrs[,c("method2","pearson")]
-#   colnames(corrs)<-c("method","value")
-#   corrs$metric<-"pearson"
-#   corrs$dataset<-dataset
-#   
-#   #Set negative correlation values to 0
-#   corrs$norm_value<-corrs$value
-#   corrs$norm_value[corrs$norm_value<0]<-0
-#   
-#   #Remove row with scWGS/WES/WGS results
-#   corrs<-corrs[! corrs$method %in% c("scWGS","WGS","WES"),]
-#   all_evals<-rbind(all_evals,corrs)
-#   
-#   #Add also AUC values (separate values for gain and loss)
-#   auc<-fread(paste0("results/output_",dataset,
-#                     "/evaluation/evaluation_cnv_prediction_auc.txt"))
-#   auc$method<-method_names[auc$method]
-#   auc<-melt(auc[,c("method","auc_gains","auc_losses")],id.vars="method")
-#   auc<-auc[,c("method","value","variable")]
-#   colnames(auc)[3]<-"metric"
-#   auc$dataset<-dataset
-#   
-#   #Scale AUC to also range from 0-1 (set value < 0.5 to 0)
-#   auc$norm_value<-auc$value
-#   auc$norm_value<-(auc$norm_value-0.5)*2
-#   auc$norm_value[auc$norm_value<0]<-0
-#   
-#   all_evals<-rbind(all_evals,auc)
-# }
-# 
-# #Order methods based on overall score
-# method_ordering<-all_evals%>%
-#   filter(dataset == "MCF7")%>%
-#   filter(metric %in% c("pearson","auc_gains","auc_losses"))%>%
-#   group_by(method)%>%
-#   summarize(norm_value=mean(norm_value))%>%
-#   arrange(norm_value)
-# 
-# #Specify "MCF7" better: "MCF7_epithelial"
-# all_evals$dataset[all_evals$dataset=="MCF7"]<-"MCF7_epithelial"
-# dataset_names[dataset_names=="MCF7"]<-"MCF7_epithelial"
-# 
-# all_evals$method<-factor(all_evals$method,levels=method_ordering$method)
-# all_evals$dataset<-factor(all_evals$dataset,levels=dataset_names)
-# 
-# #Get the deviations between datasets
-# tmp<-dcast(all_evals,method+metric~dataset,value.var="value")
-# orginal_vals<-tmp$MCF7_epithelial
-# for(dataset in dataset_names){
-#   tmp[,dataset]<-tmp[,..dataset]-orginal_vals
-# }
-# tmp<-melt(tmp,id.vars=c("method","metric"))
-# colnames(tmp)[3:4]<-c("dataset","deviation")
-# all_evals<-merge(all_evals,tmp,by=c("method","metric","dataset"))
-# 
-# #Rename facet headers
-# panelnames<-setNames(c("Correlation","AUC (Gain)","AUC (Loss)"),
-#                        c("pearson","auc_gains","auc_losses"))
-# all_evals$metric<-panelnames[as.character(all_evals$metric)]
-# all_evals$metric<-factor(all_evals$metric,levels=panelnames)
-# 
-# g.1<-ggplot(all_evals,aes(y=method,x=dataset,fill=deviation))+
-#   geom_tile()+
-#   xlab("Reference data set")+
-#   scale_fill_gradient2("Deviation",low="darkblue",mid="white",high="darkred",limits=c(-1,1))+
-#   geom_text(aes(label=round(value,2),
-#                 color=ifelse(abs(deviation)>0.5,'white','black')),
-#             size=2.8)+
-#   scale_color_manual(values=c("black","white"))+
-#   facet_grid(~metric,scales="free",space="free")+
-#   theme(axis.title.y = element_blank(),
-#         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
-#         legend.position="bottom")+
-#   guides(color="none")
+#Load the different result files
+dataset_names<-c("SNU601","SNU601_epiendo","SNU601_fibsom", "SNU601_immune","SNU601_MM")
 
-g.1<-ggplot()+theme_void()
+#Load the files
+all_evals<-NULL
+for(dataset in dataset_names){
+  
+  corrs<-fread(paste0("results/output_",dataset,
+                      "/evaluation/evaluation_cnv_prediction_corr.tsv"))
+  
+  #Filter for comparison with ground truth
+  corrs<-corrs[corrs$method1 %in% c("scWGS","WGS","WES","GATK")]
+  corrs<-corrs[,c("method2","pearson")]
+  colnames(corrs)<-c("method","value")
+  corrs$metric<-"pearson"
+  corrs$dataset<-dataset
+  
+  #Set negative correlation values to 0
+  corrs$norm_value<-corrs$value
+  corrs$norm_value[corrs$norm_value<0]<-0
+  
+  #Remove row with scWGS/WES/WGS results
+  corrs<-corrs[! corrs$method %in% c("scWGS","WGS","WES","GATK"),]
+  all_evals<-rbind(all_evals,corrs)
+  
+  #Add also AUC values (separate values for gain and loss)
+  auc<-fread(paste0("results/output_",dataset,
+                    "/evaluation/evaluation_cnv_prediction_auc.txt"))
+  auc$method<-method_names[auc$method]
+  
+  #Get standard AUC values
+  auc_basic<-melt(auc[,c("method","auc_gains","auc_losses")],id.vars="method")
+  auc_basic<-auc_basic[,c("method","value","variable")]
+  colnames(auc_basic)[3]<-"metric"
+  auc_basic$dataset<-dataset
+  
+  #Scale AUC to also range from 0-1 (set value < 0.5 to 0)
+  auc_basic$norm_value<-auc_basic$value
+  auc_basic$norm_value<-(auc_basic$norm_value-0.5)*2
+  auc_basic$norm_value[auc_basic$norm_value<0]<-0
+  
+  all_evals<-rbind(all_evals,auc_basic)
+  
+  #Get AUPRC and truncated AUC values
+  auc_others<-melt(auc[,c("method","auc_gains_trunc","aucpr_gains",
+                          "auc_losses_trunc","aucpr_losses")],id.vars="method")
+  auc_others<-auc_others[,c("method","value","variable")]
+  colnames(auc_others)[3]<-"metric"
+  auc_others$dataset<-dataset
+  auc_others$norm_value<-auc_others$value
+  all_evals<-rbind(all_evals,auc_others) 
+  
+  #Add sens and spec values for F1 scores
+  filename<-paste0("results/output_",dataset,
+                   "/evaluation/evaluation_cnv_prediction_f1.txt")
+  sensspecf1<-fread(filename)
+  sensspecf1$method<-method_names[sensspecf1$method]
+  
+  colnames(sensspecf1)[c(4,5,7,8)]<-paste0(colnames(sensspecf1)[c(4,5,7,8)],
+                                           "_f1")
+  sensspecf1<-melt(sensspecf1[,!c("cutoff_f1_gain","cutoff_f1_loss")],id.vars="method")
+  sensspecf1<-sensspecf1[,c("method","value","variable")]
+  colnames(sensspecf1)[3]<-"metric"
+  sensspecf1$dataset<-dataset
+  sensspecf1$norm_value<-sensspecf1$value
+  all_evals<-rbind(all_evals,sensspecf1)
+  
+}
+
+#Order methods based on overall score
+method_ordering<-all_evals[dataset=="SNU601" & metric=="max_f1",]
+method_ordering<-method_ordering[order(method_ordering$norm_value)]
+
+all_evals$method<-factor(all_evals$method,levels=method_ordering$method)
+all_evals$dataset<-factor(all_evals$dataset,levels=dataset_names)
+
+#Get the deviations between datasets
+tmp<-dcast(all_evals,method+metric~dataset,value.var="value")
+orginal_vals<-tmp$SNU601
+for(dataset in dataset_names){
+  tmp[,dataset]<-tmp[,..dataset]-orginal_vals
+}
+tmp<-melt(tmp,id.vars=c("method","metric"))
+colnames(tmp)[3:4]<-c("dataset","deviation")
+all_evals<-merge(all_evals,tmp,by=c("method","metric","dataset"))
+
+#Focus on a subset of metrics
+all_evals<-all_evals[all_evals$metric %in% names(panelnames),]
+all_evals$metric<-panelnames[as.character(all_evals$metric)]
+all_evals$metric<-factor(all_evals$metric,levels=panelnames)
+
+g.1<-ggplot(all_evals,aes(y=method,x=dataset,fill=deviation))+
+  geom_tile()+
+  xlab("Reference data set")+
+  scale_fill_gradient2("Deviation",low="darkblue",mid="white",high="darkred",limits=c(-1,1))+
+  geom_text(aes(label=round(value,2),
+                color=ifelse(abs(deviation)>0.5,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  facet_grid(~metric,scales="free",space="free")+
+  theme(axis.title.y = element_blank(),
+        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1),
+        legend.position="bottom")+
+  guides(color="none")
 
 # ------------------------------------------------------------------------------
 # Performance of MM with different reference datasets
@@ -1024,205 +1847,28 @@ g.2<-ggplot(all_evals,aes(y=method,x=dataset,fill=deviation))+
         legend.position="bottom")+
   guides(color="none")
 
-g<-ggarrange(g.1,g.2,labels=LETTERS[1:2],ncol=1,
+g<-ggarrange(g.2,g.1,labels=LETTERS[1:2],ncol=1,
              common.legend=TRUE,legend="bottom")
 print(g)
 
-ggsave(g,file="../figure_plots/fig3_performance_refs.png")
+ggsave(g,file="../figure_plots/supp_figure_performance_refs.png")
 ```
 
-Figure: Performance for predicting CNVs in the MCF7 dataset (A) and the MM dataset (B) when using different reference datasets.
-
-## Figure 4 - Identification of diploid datasets
-
-```{r,fig.height=20,fig.width=17}
-
-# ------------------------------------------------------------------------------
-# Karyograms for T-cell normalisied using T-cells
-# ------------------------------------------------------------------------------
-
-#Load table with external scaling factors
-scaling_table<-fread("results/output_SNU601/evaluation/scaling_factors.tsv")
-combined_methods<-fread("results/output_pbmc/evaluation/outputs_allmethods_combined_diploid.tsv")
-
-#Remove unused columns
-combined_methods<-combined_methods[,-c("end","width","strand")]
-#Remove first column to chr (instead of seqnames)
-colnames(combined_methods)[1]<-"chr" 
-
-method_names<-setNames(c("scWGS","HoneyBADGER (CNV)","HoneyBADGER (Expr)",
-                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
-                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
-                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
-                       c("wgs_mean","hb_cnv","honeybadger",
-                         "infercnv_cnv","infercnv_expr","casper",
-                         "copykat","scevan_cnv","scevan",
-                         "numbat","numbat_cnv", "CONICSmat"))
-
-#Reduce the method names to the ones that are really analyzed here
-method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
-
-#Add position information
-combined_methods$chr<-factor(combined_methods$chr,
-                             levels=unique(combined_methods$chr))
-combined_methods<-as.data.frame(combined_methods)
-
-#Add an artifical count through the whole genome and 
-#get start positions for each new chromosome
-combined_methods$counted_pos<-1:nrow(combined_methods)
-chr_boundries<-combined_methods%>%
-  group_by(chr)%>%
-  summarize(start_chr=min(counted_pos),
-            mean_chr=mean(counted_pos))
-
-#Scale every dataset (use an external reference to not falsify the current results)
-scaled_methods<-combined_methods
-for(method in names(method_names)){
-  scaled_methods[,method]<-(scaled_methods[,method]-2) /
-    scaling_table$sd[scaling_table$method==method]
-}
-
-plot_data<-reshape2::melt(scaled_methods,
-                          id.vars=c("chr","start","counted_pos"))
-
-#Rename variable names
-plot_data$variable<-method_names[as.character(plot_data$variable)]
-
-#Order them respectively
-plot_data$variable<-factor(plot_data$variable,
-                           levels=method_names)
-
-g.1 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
-  theme_bw()+
-  scale_fill_gradient2("Score",low = "darkblue",
-                        mid = "white",high = "darkred",midpoint = 0,
-                       breaks=c(-5,0,5),limits = c(-5,5),
-                       labels=c("loss","base","gain"))+
-  xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD4+ T cells")+
-  geom_vline(xintercept = chr_boundries$start_chr)+
-  scale_x_continuous(breaks=chr_boundries$mean_chr,
-                     labels=chr_boundries$chr)+
-  scale_y_discrete(limits=rev)+
-  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
-  theme(legend.position="none",
-        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
-        text=element_text(size=21),
-        plot.title=element_text(size=21))
+Figure: Performance for predicting CNVs in the SNU601 dataset (A) and the MM dataset (B) when using different reference datasets.
 
 
-# ------------------------------------------------------------------------------
-# Karyograms for T-cell normalisied using T-cells
-# ------------------------------------------------------------------------------
-
-#Load table with external scaling factors
-combined_methods<-fread("results/output_pbmc_monoref/evaluation/outputs_allmethods_combined_diploid.tsv")
-
-#Remove unused columns
-combined_methods<-combined_methods[,-c("end","width","strand")]
-#Remove first column to chr (instead of seqnames)
-colnames(combined_methods)[1]<-"chr" 
-
-#Reduce the method names to the ones that are really analyzed here
-method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
-
-#Add position information
-combined_methods$chr<-factor(combined_methods$chr,
-                             levels=unique(combined_methods$chr))
-combined_methods<-as.data.frame(combined_methods)
-
-#Add an artifical count through the whole genome and 
-#get start positions for each new chromosome
-combined_methods$counted_pos<-1:nrow(combined_methods)
-chr_boundries<-combined_methods%>%
-  group_by(chr)%>%
-  summarize(start_chr=min(counted_pos),
-            mean_chr=mean(counted_pos))
-
-#Scale every dataset (use an external reference to not falsify the current results)
-scaled_methods<-combined_methods
-for(method in names(method_names)){
-  scaled_methods[,method]<-(scaled_methods[,method]-2) /
-    scaling_table$sd[scaling_table$method==method]
-}
-
-plot_data<-reshape2::melt(scaled_methods,
-                          id.vars=c("chr","start","counted_pos"))
-
-#Rename variable names
-plot_data$variable<-method_names[as.character(plot_data$variable)]
-
-#Order them respectively
-plot_data$variable<-factor(plot_data$variable,
-                           levels=method_names)
-
-g.2 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
-  theme_bw()+
-  scale_fill_gradient2("Score",low = "darkblue",
-                        mid = "white",high = "darkred",midpoint = 0,
-                       breaks=c(-5,0,5),limits = c(-5,5),
-                       labels=c("loss","base","gain"))+
-  xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD14+ Monocytes")+
-  geom_vline(xintercept = chr_boundries$start_chr)+
-  scale_x_continuous(breaks=chr_boundries$mean_chr,
-                     labels=chr_boundries$chr)+
-  scale_y_discrete(limits=rev)+
-  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
-  theme(legend.position="bottom",
-        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
-        text=element_text(size=21),
-        plot.title=element_text(size=21))
-
-# ------------------------------------------------------------------------------
-# Performance of predicting CD4+ T cells with different references
-# ------------------------------------------------------------------------------
-
-mse_perf1<-fread("results/output_pbmc/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
-mse_perf1$ref<-"CD4+ T cells"
-mse_perf2<-fread("results/output_pbmc_monoref/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
-mse_perf2$ref<-"CD14+ Monocytes"
-mse_perf3<-fread("results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
-mse_perf3$ref<-"CD4+ T cells (ext ref)"
-mse_perf4<-fread("results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv")
-mse_perf4$ref<-"CD14+ Monocytes (ext ref)"
-mse_perf<-rbind(mse_perf1,mse_perf2,mse_perf3,mse_perf4)
-
-#Rename methods
-mse_perf$method<-method_names[mse_perf$method]
-
-#Order them based on RSME (for the CD4T cells)
-mse_perf$method<-factor(mse_perf$method, 
-                        levels=method_names[mse_perf1$method[order(mse_perf1$rmse)]])
-  
-#Change facet order
-mse_perf$ref<-factor(mse_perf$ref,levels=unique(mse_perf$ref))
-
-g.3<-ggplot(mse_perf,aes(x=method,y=rmse,fill=method))+
-  geom_bar(stat="identity")+
-  xlab("Method")+
-  ylab("RMSE")+
-  facet_wrap(~ref,ncol=2)+
-  theme(legend.position = "none",
-        text=element_text(size=21),
-        axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
-
-g<-ggarrange(g.1,g.2,g.3,heights=c(0.32,0.35,0.4),
-             labels=LETTERS[1:3],font.label=list(size=21),ncol=1)
-print(g)
-
-ggsave(g,file="../figure_plots/fig4_performance_diploid.png")
-
-```
-
-
-## Figure 5 - Subclone identification
+## Figure 4 - Subclone identification
 
 ```{r,fig.height=14,fig.width=17}
+
+
 
 #Load data (from evaluate_subclones.R)
 combined_clones<-fread("results/output_BCC/evaluation/allclones_combined.tsv")
 all_clusters<-fread("results/output_BCC/evaluation/allclusters_combined.tsv")
+
+#Replace sample names in true clusters (BCC0x instead of su00x)
+all_clusters$true_clusters<-gsub("su0","BCC",all_clusters$true_clusters)
 
 combined_methods<-combined_clones[,!c("seqnames","start","end",
                                       "width","strand")]
@@ -1319,8 +1965,11 @@ g.1.3<-ggplot(comp_clusters,aes(x=cluster_name,y=n_cells,fill=true_clusters))+
         text=element_text(size=16))+
   guides(fill=guide_legend(nrow=2,byrow=TRUE))
 
-g.1<-cowplot::plot_grid(g.1.1,g.1.2,g.1.3,ncol=3,
-                        rel_widths=c(0.1,1,0.2),axis="b",align="h")
+g.1<-plot_grid(draw_label("", size = 10),
+                        plot_grid(g.1.1,g.1.2,g.1.3,ncol=3,
+                        rel_widths=c(0.05,0.75,0.17),axis="b",align="h",greedy=TRUE),
+                        ncol=1,
+                        rel_heights=c(0.05,1))
 
 # ------------------------------------------------------------------------------
 # Performance metrics for subclone identification
@@ -1405,22 +2054,54 @@ ggsave(g,file="../figure_plots/supp_figure_thresholds.png")
 
 ## CNVs per dataset
 
+Two versions:in A the genome wide (without filtering for expression) and in B
+the ones filtered for expressed regions
+
+The unfiltered genome distribution is estimated using:
+
+evaluate/extract_unfiltered_genome_distribution.R
+
 ```{r}
 
+#Unfiltered results
+genom<-fread("data/genomice_CNV_distribution_unfiltered.tsv")
+genom$fraction_gain<-genom$gains/genom$total
+genom$fraction_loss<-genom$losses/genom$total
+genom$fraction_cnvs<-round((genom$gains + genom$losses) / genom$total,3)
+genom$more_gains<-genom$fraction_gain > genom$fraction_loss
+
+print("Unfiltered CNV coverage")
+kable(genom)
+
+print(paste("Fraction of CNVs ranging from",min(genom$fraction_cnvs),"to",max(genom$fraction_cnvs)))
+
+```
+
+```{r}
+
+#Extract the filtered results (takes a bit)
 dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU668","HGC27", "SNU16",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7","iAMP21","COLO320","MM","BCC06","BCC06post",
+                 "mouse","HCT116","A375","ALL1","ALL2")
 
 dataset_ending<-setNames(c("","","","",
                            "","","","", "",
-                           "","_cnvkit","_wes","_wes","_wes"),
+                           "","","_cnvkit","_wes","_wes","_wes",
+                           "","","","",""),
+                         dataset_names)
+
+evaldir_ending<-setNames(c("","","","",
+                           "","","","", "",
+                           "","","","","","",
+                           "_mouse","_smartseq","_smartseq","_smartseq_expr", "_smartseq_expr2"),
                          dataset_names)
 
 bin_counts<-NULL
 for(dataset in dataset_names){
   
   filename<-paste0("results/output_",dataset,
-                      "/evaluation/outputs_allmethods_combined",
+                      "/evaluation",evaldir_ending[dataset],"/outputs_allmethods_combined",
                       dataset_ending[dataset],".tsv")
   
   tmp<-fread(filename)
@@ -1449,15 +2130,27 @@ bin_counts$fraction_loss<-bin_counts$num_loss / (bin_counts$num_gain +
                                                    bin_counts$num_loss)
 bin_counts$fraction_cnvs<-bin_counts$fraction_gain+bin_counts$fraction_loss
 
+print("Filtered coverage")
 kable(bin_counts)
 
-plot_bins<-melt(bin_counts[,c("dataset","fraction_gain","fraction_loss")],
-                id.vars=c("dataset"))
+# plot_bins<-melt(bin_counts[,c("dataset","fraction_gain","fraction_loss")],
+#                 id.vars=c("dataset"))
+
+#Combine both to the same plot
+plot_unfiltered<-genom[,c("dataset","fraction_gain","fraction_loss")]
+plot_unfiltered$type<-"A. Whole Genome"
+plot_filtered<-bin_counts[,c("dataset","fraction_gain","fraction_loss")]
+plot_filtered$type<-"B. Filtered for expressed regions"
+
+plot_bins<-rbind(plot_unfiltered,plot_filtered)
+plot_bins<-melt(plot_bins, id.vars=c("dataset","type"))
 
 g<-ggplot(plot_bins,aes(x=dataset,y=value,fill=variable))+
   geom_bar(stat="identity")+ylim(0,1)+
   scale_fill_manual("CNV type",values=c("darkred","darkblue"),labels=c("Gain","Loss"))+
   ylab("Relative abundance of CNV bins")+
+  xlab("Dataset")+
+  facet_wrap(~type)+
   theme(legend.position="bottom",
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
 print(g)
@@ -1471,11 +2164,11 @@ ggsave(g,file="../figure_plots/supp_figure_cnvdistribution.png")
 
 dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU668","HGC27", "SNU16",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7","iAMP21","COLO320","MM","BCC06","BCC06post")
 
 dataset_ending<-setNames(c("","","","",
                            "","","","", "",
-                           "","_cnvkit","_wes","_wes","_wes"),
+                           "","","_cnvkit","_wes","_wes","_wes"),
                          dataset_names)
 
 define_colors<-c("#1f77b4","#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5",
@@ -1501,6 +2194,11 @@ g<-ggplot(filtering_res,aes(x=method,y=annotated_genes))+
 print(g)
 ggsave(g,file="../figure_plots/supp_figure_filtered_genes.png")
 
+#Show values
+tmp<-filtering_res%>%
+  group_by(method)%>%
+  summarize(mean_genes=mean(annotated_genes),median_genes=median(annotated_genes))
+kable(tmp)
 ```
 
 ## Compare filtered and unfiltered results on the SNU601 dataset
@@ -1824,10 +2522,10 @@ ggsave(g,file="../figure_plots/supp_figure_karyograms.png")
 
 dataset_names<-c("SNU601","NCIN87","MKN45","KATOIII",
                  "NUGC4","SNU638","SNU668","HGC27", "SNU16",
-                 "MCF7","COLO320","MM","BCC06","BCC06post")
+                 "MCF7","iAMP21","COLO320","MM","BCC06","BCC06post")
 dataset_ending<-setNames(c("","","","",
                            "","","","", "",
-                           "","_cnvkit","_wes","_wes","_wes"),
+                           "","","_cnvkit","_wes","_wes","_wes"),
                          dataset_names)
 
 #Load the files
@@ -1873,7 +2571,7 @@ Supplementary Table with prediction accuracy (first table with general accuracy,
 ```{r}
 
 pred_comb<-NULL
-for(annot_data in c("MM","BCC06","BCC06post")){
+for(annot_data in c("MM","BCC06","BCC06post","iAMP21")){
   pred<-fread(paste0("results/output_",annot_data,
                    "/evaluation/evaluation_cancer_prediction_",annot_data,".tsv"))
   pred$dataset<-annot_data
@@ -1900,12 +2598,15 @@ method_names_wo<-setNames(c("copyKat","copyKat (wo ref)",
                          "numbat_wref","numbat_woref",
                          "CONICSmat_wref","CONICSmat_woref"))
 
+dataset_ending<-setNames(c("_wesautoannot","_wesautoannot","_wesautoannot","_autoannot"),
+                         c("BCC06","BCC06post","MM", "iAMP21"))
 #Load the files
 evals_woref<-NULL
-for(dataset in c("BCC06","BCC06post","MM")){
+for(dataset in c("BCC06","BCC06post","MM", "iAMP21")){
   
   corrs<-fread(paste0("results/output_",dataset,
-                      "/evaluation/evaluation_cnv_prediction_corr_wesautoannot.tsv"))
+                      "/evaluation/evaluation_cnv_prediction_corr",
+                      dataset_ending[dataset],".tsv"))
   
   #Filter for comparison with ground truth
   corrs<-corrs[corrs$method1 %in% c("scWGS","WGS","WES","GATK")]
@@ -1924,7 +2625,8 @@ for(dataset in c("BCC06","BCC06post","MM")){
   
   #Add also AUC values (separate values for gain and loss)
   auc<-fread(paste0("results/output_",dataset,
-                    "/evaluation/evaluation_cnv_prediction_auc_wesautoannot.txt"))
+                    "/evaluation/evaluation_cnv_prediction_auc",
+                    dataset_ending[dataset],".txt"))
   auc$method<-method_names_wo[auc$method]
   
   #Get standard AUC values
@@ -1951,7 +2653,8 @@ for(dataset in c("BCC06","BCC06post","MM")){
 
   #Add sens and spec values for F1 scores
   filename<-paste0("results/output_",dataset,
-                   "/evaluation/evaluation_cnv_prediction_f1_wesautoannot.txt")
+                   "/evaluation/evaluation_cnv_prediction_f1",
+                   dataset_ending[dataset],".txt")
   sensspecf1<-fread(filename)
   sensspecf1$method<-method_names_wo[sensspecf1$method]
   
@@ -2114,6 +2817,10 @@ ggsave(g.1,file="../figure_plots/suppfig_SNU601_subsampling.png")
 
 ```{r}
 
+# ------------------------------------------------------------------------------
+# For the CD4+ T cell reference
+# ------------------------------------------------------------------------------
+
 #Read the two different input files
 file1<-"results/output_pbmc_ext/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv"
 file2<-"results/output_pbmc_ext_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv"
@@ -2128,13 +2835,137 @@ mse<-merge(mse_cr1,mse_cr7,by="Method")
 #Rename methods
 mse$Method<-method_names[mse$Method]
 
-g<-ggplot(mse,aes(x=rmse_cr1,y=rmse_cr7,color=Method))+
+g.1<-ggplot(mse,aes(x=rmse_cr1,y=rmse_cr7,color=Method))+
   geom_point()+geom_abline()+
-  xlab("RMSE (reference mapped with CellRanger V1)")+
-  ylab("RMSE (reference mapped with CellRanger V7)")
+  xlab("RMSE (ref mapped with CellRanger V1)")+
+  ylab("RMSE (ref mapped with CellRanger V7)")+
+  ggtitle("CD4+ T cells")+ylim(0,2.5)+xlim(0,2.7)
+
+# ------------------------------------------------------------------------------
+# For the CD14+ Monocyte reference
+# ------------------------------------------------------------------------------
+
+#Read the two different input files
+file1<-"results/output_pbmc_ext_mono/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv"
+file2<-"results/output_pbmc_ext_mono_cr7/evaluation/evaluation_cnv_prediction_rmse_diploid.tsv"
+
+mse_cr1<-fread(file1)
+colnames(mse_cr1)<-c("Method","rmse_cr1")
+mse_cr7<-fread(file2)
+colnames(mse_cr7)<-c("Method","rmse_cr7")
+
+mse<-merge(mse_cr1,mse_cr7,by="Method")
+
+#Rename methods
+mse$Method<-method_names[mse$Method]
+
+g.2<-ggplot(mse,aes(x=rmse_cr1,y=rmse_cr7,color=Method))+
+  geom_point()+geom_abline()+
+  xlab("RMSE (ref mapped with CellRanger V1)")+
+  ylab("RMSE (ref mapped with CellRanger V7)")+
+  ggtitle("CD14+ Monocytes")+ylim(0,2.5)+xlim(0,2.7)
+
+g<-ggarrange(g.1,g.2,ncol=2,labels=LETTERS[1:2],common.legend = TRUE)
 
 print(g)
 
 ggsave(g,file="../figure_plots/supp_pbmc_cr_comp.png")
+```
+
+## Dataset characterstics
+
+```{r, fig.height=7,fig.width=8}
+
+suppressWarnings(corrs<-fread("results/correlation_datafeatures_maxf1score.tsv"))
+
+#Split into general characteristics and SNP-specific characteristics
+corrs1<-corrs[! (corrs$type %in% c("numbat_nsnps","numbat_cells_wsnp","casper_nsnps")),]
+corrs2<-corrs[corrs$type %in% c("numbat_nsnps","numbat_cells_wsnp","casper_nsnps"),]
+
+g.1<-ggplot(corrs1,aes(x=method,y=type,fill=cor))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset characteristics")+
+  #ggtitle("Correlation between characterstics and maximal F1 score")+
+  #scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor,2),
+                color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+#Show ordering
+corrs_ordered<-corrs1%>%
+  group_by(type)%>%
+  summarize(mean_cor=mean(abs(cor)))
+
+kable(corrs_ordered[order(corrs_ordered$mean_cor,decreasing=TRUE),])
+
+
+g.2<-ggplot(corrs2,aes(x=method,y=type,fill=cor))+
+  geom_tile()+
+  xlab("Method")+ylab("Dataset\ncharacteristics")+
+  #ggtitle("Correlation between characterstics and maximal F1 score")+
+  #scale_fill_viridis("Normalized\nScore",limits=c(0,1))+
+  scale_fill_gradient2(high="red",mid="white",low="blue")+
+  geom_text(aes(label=round(cor,2),
+                color=ifelse(abs(cor)>0.6,'white','black')),
+            size=2.8)+
+  scale_color_manual(values=c("black","white"))+
+  theme(legend.position="none",
+        aspect.ratio = 0.8,
+        axis.text.x = element_text(angle=60,vjust=1,hjust=1))
+
+g<-ggarrange(g.1,g.2,ncol=1,heights=c(0.65,0.35),labels=c("A","B"))
+print(g)
+
+ggsave(g,file="../figure_plots/dataset_characteristics.png")
+
+```
+
+## Comparison of CaSpER with two different thresholds
+
+### For results filtered with threshold 0.1
+
+```{r}
+
+#Number of expressed genes
+filtered<-fread("results/output_SNU601/evaluation/filtering_results.tsv")
+filtered[filtered$method=="CaSpER",]
+
+#Correlation
+eval<-fread("results/output_SNU601/evaluation/evaluation_cnv_prediction_corr.tsv")
+eval[eval$method1 =="WGS" & eval$method2=="CaSpER",c("method2","pearson")]
+
+#Max F1
+eval<-fread("results/output_SNU601/evaluation/evaluation_cnv_prediction_f1.txt")
+eval[eval$method=="casper",c("method","max_f1")]
+
+#AUC scores
+eval<-fread("results/output_SNU601/evaluation/evaluation_cnv_prediction_auc.txt")
+eval[eval$method=="casper",c("method","auc_gains_trunc","auc_losses_trunc")]
+```
+
+### For results filtered with threshold 4.5
+
+```{r}
+
+#Number of expressed genes
+filtered<-fread("results/output_SNU601/evaluation_th45/filtering_results.tsv")
+filtered[filtered$method=="CaSpER",]
+
+#Correlation
+eval<-fread("results/output_SNU601/evaluation_th45/evaluation_cnv_prediction_corr.tsv")
+eval[eval$method1 =="WGS" & eval$method2=="CaSpER",c("method2","pearson")]
+
+#Max F1
+eval<-fread("results/output_SNU601/evaluation_th45/evaluation_cnv_prediction_f1.txt")
+eval[eval$method=="casper",c("method","max_f1")]
+
+#AUC scores
+eval<-fread("results/output_SNU601/evaluation_th45/evaluation_cnv_prediction_auc.txt")
+eval[eval$method=="casper",c("method","auc_gains_trunc","auc_losses_trunc")]
+
 ```
 
