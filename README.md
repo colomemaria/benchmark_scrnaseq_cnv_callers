@@ -119,5 +119,7 @@ nohup nice snakemake -s workflow.sm -u config/slurm.json --jobs=150 --local-core
     ${target} &> ${log} &
 ```
 
+Remark: this setup is based on snakemake 7.32.4, the `--cluster` parameter is removed in snakemake version 8.0.0.
+
 Further analysis scripts for preprocessing and postanalysis, which are not directly included in the snakemake pipeline can be found in the directories [preprocessing_datasets/](preprocessing_datasets/) and [evalute_results/](evalute_results/).
 
