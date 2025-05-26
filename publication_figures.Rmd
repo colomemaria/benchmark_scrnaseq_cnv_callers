@@ -408,7 +408,7 @@ all_evals$category<-factor(all_evals$category,
 
 #Rename metric values
 rename_metrics<-setNames(
-         c("Max F1 Score","Pearson corr","Trunc AUC (gains)","Trunc AUC (losses)",
+         c("Max F1 Score","Pearson corr","Partial AUC (gain)","Partial AUC (loss)",
            "RMSE (matched ref)","RMSE (other cell type)","RMSE (other dataset)",
            "RMSE (other cell type & dataset)",
            "Accuracy","ARI","Homogeneity",
@@ -545,7 +545,7 @@ Overview plot
 
 ## Figure 2 - Performance overview & Supplementary Figure 2
 
-```{r,fig.height=22,fig.width=17}
+```{r,fig.height=24,fig.width=17}
 
 # ------------------------------------------------------------------------------
 # Overall performance scores
@@ -746,7 +746,7 @@ all_evals_part3$method<-factor(as.character(all_evals_part3$method),
                                levels=rev(ordering$method))
 
 rename_metric<-setNames(c("Maximal F1 Score","Correlation",
-                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                          "Partial AUC (gain)","Partial AUC (loss)"),
                         c("max_f1","pearson",
                                "auc_gains_trunc","auc_losses_trunc"))
 
@@ -833,14 +833,16 @@ g.2<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
                        breaks=c(-5,0,5),limits = c(-5,5),
                        labels=c("loss","base","gain"))+
   xlab("Chromosome position")+ylab("Method")+
+  ggtitle("SNU601")+
   geom_vline(xintercept = chr_boundries$start_chr)+
   scale_x_continuous(breaks=chr_boundries$mean_chr,
                      labels=chr_boundries$chr)+
   scale_y_discrete(limits=rev)+
   coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
-  theme(legend.position="bottom",
+  theme(legend.position="none", #"bottom",
         axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
-        text=element_text(size=21))
+        text=element_text(size=21),
+        plot.title = element_text(size=22))
 
 # ------------------------------------------------------------------------------
 # Comparison between SNU601 methods (correlations)
@@ -923,11 +925,81 @@ g.4<-ggplot(corrs,aes(x=cor,y=type_label,fill=method))+
   guides(fill=guide_legend(nrow=3))
 
 # ------------------------------------------------------------------------------
+# Karyogram A375
+# ------------------------------------------------------------------------------
+
+combined_methods<-fread("results/output_A375/evaluation_smartseq/outputs_allmethods_combined.tsv")
+method_names_extended<-c(setNames("scWGS","wgs_mean"),method_names)
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1:2]<-c("chr","start_position")
+
+#Sort chromosomes correctly
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset to have diploid values at 0 and a standard deviation of 1
+scaling_factor<-NULL
+scaled_methods<-combined_methods
+method_names_extended<-method_names_extended[names(method_names_extended) %in% colnames(scaled_methods)]
+for(method in names(method_names_extended)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) / 
+    sd(scaled_methods[,method])
+  
+  #Save the standard deviation of each method to document the chosen normalization factor
+  scaling_factor<-rbind(scaling_factor,
+                        data.frame(method,
+                                   sd=sd(combined_methods[,method]),
+                                   mean=mean(combined_methods[,method]-2)))
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start_position","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names_extended[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names_extended)
+
+g.5<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+    scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("A375")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title = element_text(size=22))
+
+# ------------------------------------------------------------------------------
 # Combination of everything
 # ------------------------------------------------------------------------------
 
 g.bottom<-ggarrange(g.4,g.3,labels=LETTERS[2:3],widths=c(0.45,0.55),font.label=list(size=21))
-g<-ggarrange(g.1,NULL,g.bottom,NULL,g.2,labels=c(LETTERS[1],"","","",LETTERS[4]),heights=c(0.42,0.02,0.30,0.02,0.24),
+g<-ggarrange(g.1,NULL,g.bottom,NULL,g.2,g.5,
+             labels=c(LETTERS[1],"","","",LETTERS[4:5]),
+             heights=c(0.39,0.02,0.25,0.02,0.18,0.20),
              ncol=1,font.label=list(size=21))
 print(g)
 
@@ -1013,7 +1085,7 @@ all_evals_part3<-all_evals[all_evals$metric %in% all_metrics,]
 #Rename metrics
 replace_metrics<-setNames(
          c("Maximal F1 Score","Correlation",
-            "Truncated AUC (gain)","Truncated AUC (loss)",
+            "Partial AUC (gain)","Partial AUC (loss)",
            "AUC (gain)", "AUC (loss)",
            "Sensitivity (gain)","Precision (gain)",
            "Sensitivity (loss)","Precision (loss)"),
@@ -1117,7 +1189,7 @@ kable(tmp)
 
 ## Figure 3 - Identification of diploid datasets and different reference datasets
 
-```{r,fig.height=14,fig.width=17}
+```{r,fig.height=22,fig.width=17}
 
 
 # ------------------------------------------------------------------------------
@@ -1148,10 +1220,150 @@ g.1 <-ggplot(mse_perf,aes(x=method,y=rmse,fill=method))+
   geom_bar(stat="identity")+
   xlab("Method")+
   ylab("RMSE")+
-  facet_wrap(~ref,ncol=2)+
+  facet_wrap(~ref,ncol=4)+#ncol=2)+
   theme(legend.position = "none",
         text=element_text(size=21),
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+
+# ------------------------------------------------------------------------------
+# Karyograms for the diploid datasets
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+scaling_table<-fread("results/output_SNU601/evaluation/scaling_factors.tsv")
+combined_methods<-fread("results/output_pbmc/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+method_names<-setNames(c("scWGS","HoneyBADGER (CNV)","HoneyBADGER (Expr)",
+                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
+                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+                       c("wgs_mean","hb_cnv","honeybadger",
+                         "infercnv_cnv","infercnv_expr","casper",
+                         "copykat","scevan_cnv","scevan",
+                         "numbat","numbat_cnv", "CONICSmat"))
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.1b <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD4+ T cells with CD4+ T cells reference")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="none",
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=19))
+
+
+# ------------------------------------------------------------------------------
+# Karyograms for T-cell normalisied using Monocytes
+# ------------------------------------------------------------------------------
+
+#Load table with external scaling factors
+combined_methods<-fread("results/output_pbmc_monoref/evaluation/outputs_allmethods_combined_diploid.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset (use an external reference to not falsify the current results)
+scaled_methods<-combined_methods
+for(method in names(method_names)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) /
+    scaling_table$sd[scaling_table$method==method]
+}
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names)
+
+g.1c <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("CD4+ T cells with CD14+ Monocytes reference")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        #axis.title.x = element_blank(),
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=19))
+
 
 # ------------------------------------------------------------------------------
 # The effect of different references on the performance
@@ -1170,7 +1382,7 @@ method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
                          "numbat","numbat_cnv", "CONICSmat"))
 
 panelnames<-setNames(c("Maximal F1 Score","Correlation",
-                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                          "Partial AUC (gain)","Partial AUC (loss)"),
                         c("max_f1","pearson",
                                "auc_gains_trunc","auc_losses_trunc"))
 
@@ -1243,20 +1455,121 @@ g.3<-ggplot(all_evals,aes(x=dataset,y=value))+
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))+
   guides(color=guide_legend(nrow=2,byrow=TRUE))
 
-g.bottom<-ggarrange(g.2,g.3,ncol=2,labels=LETTERS[2:3],font.label=list(size=21),
+g.bottom<-ggarrange(g.2,g.3,ncol=2,labels=LETTERS[4:5],font.label=list(size=21),
                     align="hv", common.legend = TRUE,legend="bottom")
+
+# ------------------------------------------------------------------------------
+# Performance of the automatic reference recognition
+# ------------------------------------------------------------------------------
+
+method_names_woref<-setNames(c("scWGS","copyKat","copyKat (wo ref)",
+                         "SCEVAN","SCEVAN (wo ref)",
+                         "Numbat", "Numbat (wo ref)", 
+                         "CONICSmat", "CONICSmat (wo ref)"),
+                       c("wgs_mean","copykat_wref","copykat_woref",
+                         "scevan_cnv_wref","scevan_cnv_woref",
+                         "numbat_wref","numbat_woref", 
+                         "CONICSmat_wref","CONICSmat_woref"))
+
+#Load table with external scaling factors
+combined_methods<-fread("results/output_iAMP21/evaluation/outputs_allmethods_combined_autoannot.tsv")
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names_woref<-method_names_woref[names(method_names_woref) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset to have diploid values at 0 and a standard deviation of 1
+scaling_factor<-NULL
+scaled_methods<-combined_methods
+for(method in names(method_names_woref)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) / 
+    sd(scaled_methods[,method])
+  
+  #Save the standard deviation of each method to document the chosen normalization factor
+  scaling_factor<-rbind(scaling_factor,
+                        data.frame(method,
+                                   sd=sd(combined_methods[,method]),
+                                   mean=mean(combined_methods[,method]-2)))
+}
+
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names_woref[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names_woref)
+
+g.0 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle("iAMP21")+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=21))
 
 # ------------------------------------------------------------------------------
 # Combine the different panels
 # ------------------------------------------------------------------------------
 
-g<-ggarrange(g.1,g.bottom,heights=c(0.5,0.5),
-             labels=c(LETTERS[1],""),font.label=list(size=21),ncol=1)
+g<-ggarrange(g.1b,g.1c,g.1,g.bottom,g.0,align="hv",heights=c(0.13,0.18,0.2,0.23,0.18),
+             labels=c(LETTERS[1:3],"",LETTERS[6]),font.label=list(size=21),ncol=1)
 print(g)
 
 ggsave(g,file="../figure_plots/fig3_performance_ref_diploid.png")
 
 ```
+
+### Plot it in two parts and set it together afterwards in inkscape so that it aligns correctly
+
+```{r,fig.height=12,fig.width=17}
+#Test plotting it separatly for aligning it
+
+g<-ggarrange(g.1b,g.1c,g.0,align="hv",heights=c(0.13,0.18,0.18),
+             labels=c(LETTERS[1:2],LETTERS[6]),font.label=list(size=21),ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/fig3_performance_ref_diploid_part1.pdf")
+```
+
+```{r,fig.height=10,fig.width=17}
+g<-ggarrange(g.1,g.bottom,heights=c(0.2,0.23),
+             labels=c(LETTERS[3],""),font.label=list(size=21),ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/fig3_performance_ref_diploid_part2.pdf")
+```
+
 
 ## Potential Supplement (not used at the moment) - Performance across dataset ordered by method
 
@@ -1331,6 +1644,8 @@ g.3<-ggplot(all_evals,aes(x=method,y=value))+
         axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))+
   guides(color=guide_legend(nrow=2,byrow=TRUE))
 
+
+
 g<-ggarrange(g.2,g.3,ncol=2,labels=LETTERS[1:2],font.label=list(size=21))
 ggsave(g,file="../figure_plots/supp_diff_refs_reorded.png")
 print(g)
@@ -1339,144 +1654,144 @@ print(g)
 
 ## Supplement - Karyograms for the performance on diploid datasets
 
-```{r,fig.height=24,fig.width=17}
+```{r,fig.height=12,fig.width=17}
 
 # ------------------------------------------------------------------------------
 # Karyograms for T-cell normalisied using T-cells
 # ------------------------------------------------------------------------------
 
-#Load table with external scaling factors
-scaling_table<-fread("results/output_SNU601/evaluation/scaling_factors.tsv")
-combined_methods<-fread("results/output_pbmc/evaluation/outputs_allmethods_combined_diploid.tsv")
-
-#Remove unused columns
-combined_methods<-combined_methods[,-c("end","width","strand")]
-#Remove first column to chr (instead of seqnames)
-colnames(combined_methods)[1]<-"chr" 
-
-method_names<-setNames(c("scWGS","HoneyBADGER (CNV)","HoneyBADGER (Expr)",
-                         "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
-                         "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
-                         "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
-                       c("wgs_mean","hb_cnv","honeybadger",
-                         "infercnv_cnv","infercnv_expr","casper",
-                         "copykat","scevan_cnv","scevan",
-                         "numbat","numbat_cnv", "CONICSmat"))
-
-#Reduce the method names to the ones that are really analyzed here
-method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
-
-#Add position information
-combined_methods$chr<-factor(combined_methods$chr,
-                             levels=unique(combined_methods$chr))
-combined_methods<-as.data.frame(combined_methods)
-
-#Add an artifical count through the whole genome and 
-#get start positions for each new chromosome
-combined_methods$counted_pos<-1:nrow(combined_methods)
-chr_boundries<-combined_methods%>%
-  group_by(chr)%>%
-  summarize(start_chr=min(counted_pos),
-            mean_chr=mean(counted_pos))
-
-#Scale every dataset (use an external reference to not falsify the current results)
-scaled_methods<-combined_methods
-for(method in names(method_names)){
-  scaled_methods[,method]<-(scaled_methods[,method]-2) /
-    scaling_table$sd[scaling_table$method==method]
-}
-
-plot_data<-reshape2::melt(scaled_methods,
-                          id.vars=c("chr","start","counted_pos"))
-
-#Rename variable names
-plot_data$variable<-method_names[as.character(plot_data$variable)]
-
-#Order them respectively
-plot_data$variable<-factor(plot_data$variable,
-                           levels=method_names)
-
-g.1 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
-  theme_bw()+
-  scale_fill_gradient2("Score",low = "darkblue",
-                        mid = "white",high = "darkred",midpoint = 0,
-                       breaks=c(-5,0,5),limits = c(-5,5),
-                       labels=c("loss","base","gain"))+
-  xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD4+ T cells")+
-  geom_vline(xintercept = chr_boundries$start_chr)+
-  scale_x_continuous(breaks=chr_boundries$mean_chr,
-                     labels=chr_boundries$chr)+
-  scale_y_discrete(limits=rev)+
-  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
-  theme(legend.position="none",
-        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
-        text=element_text(size=21),
-        plot.title=element_text(size=21))
+# #Load table with external scaling factors
+# scaling_table<-fread("results/output_SNU601/evaluation/scaling_factors.tsv")
+# combined_methods<-fread("results/output_pbmc/evaluation/outputs_allmethods_combined_diploid.tsv")
+# 
+# #Remove unused columns
+# combined_methods<-combined_methods[,-c("end","width","strand")]
+# #Remove first column to chr (instead of seqnames)
+# colnames(combined_methods)[1]<-"chr" 
+# 
+# method_names<-setNames(c("scWGS","HoneyBADGER (CNV)","HoneyBADGER (Expr)",
+#                          "InferCNV (CNV)","InferCNV (Expr)","CaSpER",
+#                          "copyKat","SCEVAN (CNV)","SCEVAN (Expr)",
+#                          "Numbat (Expr)", "Numbat (CNV)", "CONICSmat"),
+#                        c("wgs_mean","hb_cnv","honeybadger",
+#                          "infercnv_cnv","infercnv_expr","casper",
+#                          "copykat","scevan_cnv","scevan",
+#                          "numbat","numbat_cnv", "CONICSmat"))
+# 
+# #Reduce the method names to the ones that are really analyzed here
+# method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+# 
+# #Add position information
+# combined_methods$chr<-factor(combined_methods$chr,
+#                              levels=unique(combined_methods$chr))
+# combined_methods<-as.data.frame(combined_methods)
+# 
+# #Add an artifical count through the whole genome and 
+# #get start positions for each new chromosome
+# combined_methods$counted_pos<-1:nrow(combined_methods)
+# chr_boundries<-combined_methods%>%
+#   group_by(chr)%>%
+#   summarize(start_chr=min(counted_pos),
+#             mean_chr=mean(counted_pos))
+# 
+# #Scale every dataset (use an external reference to not falsify the current results)
+# scaled_methods<-combined_methods
+# for(method in names(method_names)){
+#   scaled_methods[,method]<-(scaled_methods[,method]-2) /
+#     scaling_table$sd[scaling_table$method==method]
+# }
+# 
+# plot_data<-reshape2::melt(scaled_methods,
+#                           id.vars=c("chr","start","counted_pos"))
+# 
+# #Rename variable names
+# plot_data$variable<-method_names[as.character(plot_data$variable)]
+# 
+# #Order them respectively
+# plot_data$variable<-factor(plot_data$variable,
+#                            levels=method_names)
+# 
+# g.1 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+#   theme_bw()+
+#   scale_fill_gradient2("Score",low = "darkblue",
+#                         mid = "white",high = "darkred",midpoint = 0,
+#                        breaks=c(-5,0,5),limits = c(-5,5),
+#                        labels=c("loss","base","gain"))+
+#   xlab("Chromosome position")+ylab("Method")+
+#   ggtitle("CD4+ T cells with CD4+ T cells reference")+
+#   geom_vline(xintercept = chr_boundries$start_chr)+
+#   scale_x_continuous(breaks=chr_boundries$mean_chr,
+#                      labels=chr_boundries$chr)+
+#   scale_y_discrete(limits=rev)+
+#   coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+#   theme(legend.position="none",
+#         axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+#         text=element_text(size=21),
+#         plot.title=element_text(size=19))
 
 
 # ------------------------------------------------------------------------------
 # Karyograms for T-cell normalisied using Monocytes
 # ------------------------------------------------------------------------------
 
-#Load table with external scaling factors
-combined_methods<-fread("results/output_pbmc_monoref/evaluation/outputs_allmethods_combined_diploid.tsv")
-
-#Remove unused columns
-combined_methods<-combined_methods[,-c("end","width","strand")]
-#Remove first column to chr (instead of seqnames)
-colnames(combined_methods)[1]<-"chr" 
-
-#Reduce the method names to the ones that are really analyzed here
-method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
-
-#Add position information
-combined_methods$chr<-factor(combined_methods$chr,
-                             levels=unique(combined_methods$chr))
-combined_methods<-as.data.frame(combined_methods)
-
-#Add an artifical count through the whole genome and 
-#get start positions for each new chromosome
-combined_methods$counted_pos<-1:nrow(combined_methods)
-chr_boundries<-combined_methods%>%
-  group_by(chr)%>%
-  summarize(start_chr=min(counted_pos),
-            mean_chr=mean(counted_pos))
-
-#Scale every dataset (use an external reference to not falsify the current results)
-scaled_methods<-combined_methods
-for(method in names(method_names)){
-  scaled_methods[,method]<-(scaled_methods[,method]-2) /
-    scaling_table$sd[scaling_table$method==method]
-}
-
-plot_data<-reshape2::melt(scaled_methods,
-                          id.vars=c("chr","start","counted_pos"))
-
-#Rename variable names
-plot_data$variable<-method_names[as.character(plot_data$variable)]
-
-#Order them respectively
-plot_data$variable<-factor(plot_data$variable,
-                           levels=method_names)
-
-g.2 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
-  theme_bw()+
-  scale_fill_gradient2("Score",low = "darkblue",
-                        mid = "white",high = "darkred",midpoint = 0,
-                       breaks=c(-5,0,5),limits = c(-5,5),
-                       labels=c("loss","base","gain"))+
-  xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD14+ Monocytes")+
-  geom_vline(xintercept = chr_boundries$start_chr)+
-  scale_x_continuous(breaks=chr_boundries$mean_chr,
-                     labels=chr_boundries$chr)+
-  scale_y_discrete(limits=rev)+
-  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
-  theme(legend.position="none",
-        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
-        text=element_text(size=21),
-        plot.title=element_text(size=21))
+# #Load table with external scaling factors
+# combined_methods<-fread("results/output_pbmc_monoref/evaluation/outputs_allmethods_combined_diploid.tsv")
+# 
+# #Remove unused columns
+# combined_methods<-combined_methods[,-c("end","width","strand")]
+# #Remove first column to chr (instead of seqnames)
+# colnames(combined_methods)[1]<-"chr" 
+# 
+# #Reduce the method names to the ones that are really analyzed here
+# method_names<-method_names[names(method_names) %in% colnames(combined_methods)]
+# 
+# #Add position information
+# combined_methods$chr<-factor(combined_methods$chr,
+#                              levels=unique(combined_methods$chr))
+# combined_methods<-as.data.frame(combined_methods)
+# 
+# #Add an artifical count through the whole genome and 
+# #get start positions for each new chromosome
+# combined_methods$counted_pos<-1:nrow(combined_methods)
+# chr_boundries<-combined_methods%>%
+#   group_by(chr)%>%
+#   summarize(start_chr=min(counted_pos),
+#             mean_chr=mean(counted_pos))
+# 
+# #Scale every dataset (use an external reference to not falsify the current results)
+# scaled_methods<-combined_methods
+# for(method in names(method_names)){
+#   scaled_methods[,method]<-(scaled_methods[,method]-2) /
+#     scaling_table$sd[scaling_table$method==method]
+# }
+# 
+# plot_data<-reshape2::melt(scaled_methods,
+#                           id.vars=c("chr","start","counted_pos"))
+# 
+# #Rename variable names
+# plot_data$variable<-method_names[as.character(plot_data$variable)]
+# 
+# #Order them respectively
+# plot_data$variable<-factor(plot_data$variable,
+#                            levels=method_names)
+# 
+# g.2 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+#   theme_bw()+
+#   scale_fill_gradient2("Score",low = "darkblue",
+#                         mid = "white",high = "darkred",midpoint = 0,
+#                        breaks=c(-5,0,5),limits = c(-5,5),
+#                        labels=c("loss","base","gain"))+
+#   xlab("Chromosome position")+ylab("Method")+
+#   ggtitle("CD4+ T cells with CD14+ Monocytes reference")+
+#   geom_vline(xintercept = chr_boundries$start_chr)+
+#   scale_x_continuous(breaks=chr_boundries$mean_chr,
+#                      labels=chr_boundries$chr)+
+#   scale_y_discrete(limits=rev)+
+#   coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+#   theme(legend.position="none",
+#         axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+#         text=element_text(size=21),
+#         plot.title=element_text(size=19))
 
 # ------------------------------------------------------------------------------
 # Karyograms for T-cell normalisied using T-cells (external reference)
@@ -1530,7 +1845,7 @@ g.3 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
                        breaks=c(-5,0,5),limits = c(-5,5),
                        labels=c("loss","base","gain"))+
   xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD4+ T cells (ext ref)")+
+  ggtitle("CD4+ T cells with CD4+ T cells external reference")+
   geom_vline(xintercept = chr_boundries$start_chr)+
   scale_x_continuous(breaks=chr_boundries$mean_chr,
                      labels=chr_boundries$chr)+
@@ -1539,7 +1854,7 @@ g.3 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
   theme(legend.position="none",
         axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
         text=element_text(size=21),
-        plot.title=element_text(size=21))
+        plot.title=element_text(size=19))
 
 # ------------------------------------------------------------------------------
 # Karyograms for T-cell normalisied using Monocytes (external data)
@@ -1593,7 +1908,7 @@ g.4 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
                        breaks=c(-5,0,5),limits = c(-5,5),
                        labels=c("loss","base","gain"))+
   xlab("Chromosome position")+ylab("Method")+
-  ggtitle("CD14+ Monocytes (ext ref)")+
+  ggtitle("CD4+ T cells with with CD14+ Monocytes external reference")+
   geom_vline(xintercept = chr_boundries$start_chr)+
   scale_x_continuous(breaks=chr_boundries$mean_chr,
                      labels=chr_boundries$chr)+
@@ -1602,10 +1917,10 @@ g.4 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
   theme(legend.position="bottom",
         axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
         text=element_text(size=21),
-        plot.title=element_text(size=21))
+        plot.title=element_text(size=19))
 
-g<-ggarrange(g.1,g.2,g.3,g.4,heights=c(0.24,0.24,0.24,0.28),
-             labels=LETTERS[1:4],font.label=list(size=21),ncol=1)
+g<-ggarrange(g.3,g.4,heights=c(0.24,0.28),
+             labels=LETTERS[1:2],font.label=list(size=21),ncol=1)
 print(g)
 
 ggsave(g,file="../figure_plots/supp_karyogramms_diploid.png")
@@ -1625,7 +1940,7 @@ method_names<-setNames(c("InferCNV (CNV)","InferCNV (Expr)","CaSpER",
                          "numbat","numbat_cnv", "CONICSmat"))
 
 panelnames<-setNames(c("Maximal F1 Score","Correlation",
-                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                          "Partial AUC (gain)","Partial AUC (loss)"),
                         c("max_f1","pearson",
                                "auc_gains_trunc","auc_losses_trunc"))
 
@@ -1857,10 +2172,260 @@ ggsave(g,file="../figure_plots/supp_figure_performance_refs.png")
 Figure: Performance for predicting CNVs in the SNU601 dataset (A) and the MM dataset (B) when using different reference datasets.
 
 
+
+### Supplement - performance with automatic annotation
+
+```{r,fig.height=18,fig.width=17}
+
+method_names_woref<-setNames(c("scWGS","copyKat","copyKat (wo ref)",
+                         "SCEVAN","SCEVAN (wo ref)",
+                         "Numbat", "Numbat (wo ref)", 
+                         "CONICSmat", "CONICSmat (wo ref)"),
+                       c("wgs_mean","copykat_wref","copykat_woref",
+                         "scevan_cnv_wref","scevan_cnv_woref",
+                         "numbat_wref","numbat_woref", 
+                         "CONICSmat_wref","CONICSmat_woref"))
+
+# ------------------------------------------------------------------------------
+# Dataset MM
+# ------------------------------------------------------------------------------
+
+dataset_name<-"MM"
+
+#Load table with external scaling factors
+combined_methods<-fread(paste0("results/output_",dataset_name,
+                               "/evaluation/outputs_allmethods_combined_wesautoannot.tsv"))
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names_woref<-method_names_woref[names(method_names_woref) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset to have diploid values at 0 and a standard deviation of 1
+scaling_factor<-NULL
+scaled_methods<-combined_methods
+for(method in names(method_names_woref)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) / 
+    sd(scaled_methods[,method])
+  
+  #Save the standard deviation of each method to document the chosen normalization factor
+  scaling_factor<-rbind(scaling_factor,
+                        data.frame(method,
+                                   sd=sd(combined_methods[,method]),
+                                   mean=mean(combined_methods[,method]-2)))
+}
+
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names_woref[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names_woref)
+
+g.1 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle(dataset_name)+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=19))
+
+# ------------------------------------------------------------------------------
+# Dataset BCC06
+# ------------------------------------------------------------------------------
+
+dataset_name<-"BCC06"
+
+#Load table with external scaling factors
+combined_methods<-fread(paste0("results/output_",dataset_name,
+                               "/evaluation/outputs_allmethods_combined_wesautoannot.tsv"))
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names_woref<-method_names_woref[names(method_names_woref) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset to have diploid values at 0 and a standard deviation of 1
+scaling_factor<-NULL
+scaled_methods<-combined_methods
+for(method in names(method_names_woref)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) / 
+    sd(scaled_methods[,method])
+  
+  #Save the standard deviation of each method to document the chosen normalization factor
+  scaling_factor<-rbind(scaling_factor,
+                        data.frame(method,
+                                   sd=sd(combined_methods[,method]),
+                                   mean=mean(combined_methods[,method]-2)))
+}
+
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names_woref[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names_woref)
+
+g.2 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle(dataset_name)+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=19))
+
+
+# ------------------------------------------------------------------------------
+# Dataset BCC06post
+# ------------------------------------------------------------------------------
+
+dataset_name<-"BCC06post"
+
+#Load table with external scaling factors
+combined_methods<-fread(paste0("results/output_",dataset_name,
+                               "/evaluation/outputs_allmethods_combined_wesautoannot.tsv"))
+
+#Remove unused columns
+combined_methods<-combined_methods[,-c("end","width","strand")]
+#Remove first column to chr (instead of seqnames)
+colnames(combined_methods)[1]<-"chr" 
+
+#Reduce the method names to the ones that are really analyzed here
+method_names_woref<-method_names_woref[names(method_names_woref) %in% colnames(combined_methods)]
+
+#Add position information
+combined_methods$chr<-factor(combined_methods$chr,
+                             levels=unique(combined_methods$chr))
+combined_methods<-as.data.frame(combined_methods)
+
+#Add an artifical count through the whole genome and 
+#get start positions for each new chromosome
+combined_methods$counted_pos<-1:nrow(combined_methods)
+chr_boundries<-combined_methods%>%
+  group_by(chr)%>%
+  summarize(start_chr=min(counted_pos),
+            mean_chr=mean(counted_pos))
+
+#Scale every dataset to have diploid values at 0 and a standard deviation of 1
+scaling_factor<-NULL
+scaled_methods<-combined_methods
+for(method in names(method_names_woref)){
+  scaled_methods[,method]<-(scaled_methods[,method]-2) / 
+    sd(scaled_methods[,method])
+  
+  #Save the standard deviation of each method to document the chosen normalization factor
+  scaling_factor<-rbind(scaling_factor,
+                        data.frame(method,
+                                   sd=sd(combined_methods[,method]),
+                                   mean=mean(combined_methods[,method]-2)))
+}
+
+
+plot_data<-reshape2::melt(scaled_methods,
+                          id.vars=c("chr","start","counted_pos"))
+
+#Rename variable names
+plot_data$variable<-method_names_woref[as.character(plot_data$variable)]
+
+#Order them respectively
+plot_data$variable<-factor(plot_data$variable,
+                           levels=method_names_woref)
+
+g.3 <-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
+  theme_bw()+
+  scale_fill_gradient2("Score",low = "darkblue",
+                        mid = "white",high = "darkred",midpoint = 0,
+                       breaks=c(-5,0,5),limits = c(-5,5),
+                       labels=c("loss","base","gain"))+
+  xlab("Chromosome position")+ylab("Method")+
+  ggtitle(dataset_name)+
+  geom_vline(xintercept = chr_boundries$start_chr)+
+  scale_x_continuous(breaks=chr_boundries$mean_chr,
+                     labels=chr_boundries$chr)+
+  scale_y_discrete(limits=rev)+
+  coord_cartesian(xlim=c(1,max(plot_data$counted_pos)),expand=FALSE)+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,vjust=0.5,hjust=1),
+        text=element_text(size=21),
+        plot.title=element_text(size=19))
+
+
+# ------------------------------------------------------------------------------
+# Combine the different panels
+# ------------------------------------------------------------------------------
+
+g<-ggarrange(g.1,g.2,g.3,heights=c(0.33,0.33,0.33),
+             labels=LETTERS[1:3],font.label=list(size=21),ncol=1)
+print(g)
+
+ggsave(g,file="../figure_plots/supp_figure_automatic_ref.png")
+
+```
+
+
 ## Figure 4 - Subclone identification
 
 ```{r,fig.height=14,fig.width=17}
-
 
 
 #Load data (from evaluate_subclones.R)
@@ -1930,7 +2495,9 @@ g.1.2<-ggplot(plot_data,aes(x=counted_pos,y=variable,fill=value))+geom_tile()+
   theme_bw()+
   scale_fill_gradient2("Score",low = "darkblue",
                        mid = "white",high = "darkred",midpoint = 0,
-                       breaks=c(-5,0,5))+
+                       breaks=c(-5,0,5),
+                       limits=c(-5,5),
+                       labels=c("loss","base","gain"))+
   xlab("Chromosome position")+
   geom_vline(xintercept = chr_boundries$start_chr)+
   scale_x_continuous(breaks=chr_boundries$mean_chr,
@@ -2016,7 +2583,7 @@ g.2.2<-ggplot(compare_methods,aes(x=method2,y=method1,fill=homogen),
         legend.position = "bottom",
         aspect.ratio = 0.6)
 
-g.2<-ggarrange(g.2.1,g.2.2,labels=LETTERS[2:3],font.label=list(size=21))
+g.2<-ggarrange(g.2.1,g.2.2,labels=LETTERS[1:2],font.label=list(size=21))
 g<-ggarrange(g.1,g.2,ncol=1,labels=c("A",""),
              font.label=list(size=21),heights=c(0.60,0.40))
 print(g)
@@ -2294,7 +2861,7 @@ eval_comp<-merge(eval_separate,eval_filtered,
                  by.y=c("method","metric"))
 
 rename_metrics<-setNames(
-         c("Maximal F1 Score","Correlation","Truncated AUC (gain)","Truncated AUC (loss)"),
+         c("Maximal F1 Score","Correlation","Partial AUC (gain)","Partial AUC (loss)"),
          c("max_f1","pearson","auc_gains_trunc","auc_losses_trunc"))
 eval_comp$variable<-rename_metrics[eval_comp$variable]
 eval_comp$variable<-factor(eval_comp$variable,levels=rename_metrics)
@@ -2674,7 +3241,7 @@ evals_woref<-evals_woref[evals_woref$metric %in% c("pearson","auc_gains_trunc",
                                              "auc_losses_trunc","max_f1"),]
 
 rename_metric<-setNames(c("Maximal F1 Score","Correlation",
-                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                          "Partial AUC (gain)","Partial AUC (loss)"),
                         c("max_f1","pearson",
                                "auc_gains_trunc","auc_losses_trunc"))
 

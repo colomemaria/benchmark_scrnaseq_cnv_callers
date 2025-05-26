@@ -4,7 +4,7 @@
 # Only cell identifiers for which DNA was sequenced are in the clone file. 
 # Clone = NA means it was filtered out (low counts for example). 
 # Clone = 0 is that it could not be reliably assigned. 
-# ALL1 has 3 copy states: 1_1 (diploid), 2_1 (tumor) and 3_1 (tumor)
+# ALL1 has 3 copy states: 1_1 (diploid), 2_3 (tumor) and 3_1 (tumor)
 # ALL2 has 2 copy states: 2_1m (diploid) and 1_1m (tumor)
 #
 # ------------------------------------------------------------------------------

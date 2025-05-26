@@ -148,7 +148,7 @@ res_combined$method2<-factor(res_combined$method2,levels=rev(method_order$method
 
 #Rename the metrics
 rename_metric<-setNames(c("Maximal F1 Score","Correlation",
-                          "Truncated AUC (gain)","Truncated AUC (loss)"),
+                          "Partial AUC (gain)","Partial AUC (loss)"),
                         c("max_f1","pearson","auc_gains_trunc","auc_losses_trunc"))
 res_combined$metric<-rename_metric[res_combined$metric]
 res_combined$metric<-factor(res_combined$metric,
