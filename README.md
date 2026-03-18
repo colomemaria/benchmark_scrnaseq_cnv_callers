@@ -8,6 +8,9 @@ Katharina T. Schmid<sup>1</sup>, Aikaterini Symeonidi<sup>1,2</sup>, Dmytro Hlus
 
 3 European Research Institute for the Biology of Ageing, University of Groningen, University Medical Center Groningen, Groningen, The Netherlands
 
+Published in Nature Communications (2025):
+https://doi.org/10.1038/s41467-025-62359-9
+
 The preprint of this study is available here:
 https://doi.org/10.1101/2024.12.18.629083
 
