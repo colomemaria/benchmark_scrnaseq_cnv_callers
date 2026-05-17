@@ -14,12 +14,14 @@ https://doi.org/10.1038/s41467-025-62359-9
 The preprint of this study is available here:
 https://doi.org/10.1101/2024.12.18.629083
 
+
 The following README contains:
 
 1. [Project description](#project-description)
 2. [Main results](#main-results)
 3. [Setup of the pipeline](#setup-of-the-pipeline)
 4. [Running the pipeline](#running-the-pipeline)
+5. [Datasets](#datasets)
 
 ## Project description
 
@@ -126,3 +128,9 @@ Remark: this setup is based on snakemake 7.32.4, the `--cluster` parameter is re
 
 Further analysis scripts for preprocessing and postanalysis, which are not directly included in the snakemake pipeline can be found in the directories [preprocessing_datasets/](preprocessing_datasets/) and [evalute_results/](evalute_results/).
 
+## Datasets
+
+To facilitate follow-up analyses of our studies, we uploaded the CNV ground truth data here:
+https://zenodo.org/records/20260649
+
+Links to download the associated scRNA-seq datasets can be found in the data availability section of our publication (https://doi.org/10.1038/s41467-025-62359-9), as well as more information and references on all datasets.
